@@ -120,8 +120,19 @@ class TriplanarFuser:
                 )
 
             feats = self.extractor.extract_features(batch)
+            # Sanity: extractor must return channel-first (B, C, h, w).
+            # DINOv3's get_intermediate_layers(reshape=True) applies permute(0,3,1,2)
+            # → C == embed_dim (768 for ViT-B) >> spatial dims.
+            # If this fires, the extractor is returning channel-last and the whole
+            # triplanar geometry will be silently corrupted.
+            assert feats.ndim == 4 and feats.shape[1] > feats.shape[2], (
+                f"extract_features returned shape {tuple(feats.shape)}. "
+                "Expected channel-first (B, C, H, W) with C >> H. "
+                "Check get_intermediate_layers uses reshape=True with permute(0,3,1,2)."
+            )
             # Move to CPU immediately to save device memory
             all_feats.append(feats.cpu().numpy())
+
 
             if (start // self.batch_size) % 20 == 0:
                 logger.info(f"    slice {start}/{n_slices}")

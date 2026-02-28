@@ -151,26 +151,38 @@ def extract_all_pseudo_rgb_slices(
 
 def rescale_to_model_range(
     slices: np.ndarray,
+    clip_sigma: float = 3.0,
     target_mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
     target_std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
 ) -> np.ndarray:
     """
-    Rescale z-scored pseudo-RGB slices to ImageNet normalization range.
+    Convert z-scored pseudo-RGB slices to ImageNet-normalized range.
 
-    Input slices should be already z-scored (mean≈0, std≈1).
-    This maps them to approximately match ImageNet statistics expected
-    by foundation models (DINOv3, MATCHA).
+    ViT backbones (DINOv3, MATCHA) expect:  (x_pixel - mean) / std
+    where x_pixel ∈ [0, 1] and mean/std are the ImageNet statistics.
+
+    Pipeline:
+      1. Clip z-score to [-clip_sigma, +clip_sigma]  (captures 99.7% of data)
+      2. Scale to [0, 1]
+      3. Apply per-channel (x - mean) / std
 
     Args:
-        slices: array of shape (..., 3, H, W), z-scored
-        target_mean: per-channel target means (ImageNet defaults)
-        target_std: per-channel target stds (ImageNet defaults)
+        slices: array of shape (..., 3, H, W), z-scored (mean≈0, std≈1)
+        clip_sigma: z-score clipping range (default 3.0)
+        target_mean: per-channel ImageNet means
+        target_std: per-channel ImageNet stds
 
     Returns:
-        Rescaled array with same shape.
+        Rescaled array with same shape, ready for ViT input.
     """
-    out = slices.copy()
+    # Step 1+2: clip and scale to [0, 1]
+    out = np.clip(slices, -clip_sigma, clip_sigma)
+    out = (out + clip_sigma) / (2.0 * clip_sigma)  # → [0, 1]
+
+    # Step 3: ImageNet normalization per channel
+    out = out.copy()
     for c in range(3):
-        # Map from N(0,1) to N(target_mean, target_std)
-        out[..., c, :, :] = out[..., c, :, :] * target_std[c] + target_mean[c]
-    return out
+        out[..., c, :, :] = (out[..., c, :, :] - target_mean[c]) / target_std[c]
+
+    return out.astype(np.float32)
+

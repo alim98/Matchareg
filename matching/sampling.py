@@ -145,7 +145,8 @@ def include_keypoints(
     mask: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """
-    Add provided keypoints to the sampled point set (avoiding duplicates).
+    Add provided keypoints to the sampled point set, deduplicating by
+    rounded voxel coordinate.
 
     Args:
         sampled_points: (N, 3) existing sampled points
@@ -153,7 +154,7 @@ def include_keypoints(
         mask: optional mask to filter keypoints inside mask
 
     Returns:
-        combined: (N+K', 3) combined point set
+        combined: (M, 3) combined point set with duplicates removed
     """
     if mask is not None:
         # Filter keypoints to those inside mask
@@ -168,4 +169,13 @@ def include_keypoints(
         inside = mask[kp_int[:, 0], kp_int[:, 1], kp_int[:, 2]] > 0
         keypoints = keypoints[inside]
 
-    return np.vstack([sampled_points, keypoints])
+    combined = np.vstack([sampled_points, keypoints])
+
+    # Deduplicate by rounded integer coordinate
+    # np.unique returns sorted unique rows on the rounded version;
+    # we use those indices to select from the original float array.
+    _, unique_idx = np.unique(
+        np.round(combined).astype(int), axis=0, return_index=True
+    )
+    return combined[unique_idx]
+

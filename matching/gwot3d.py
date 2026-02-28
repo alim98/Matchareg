@@ -62,26 +62,49 @@ def compute_spatial_prior(
     return dist_sq / (sigma ** 2)
 
 
+def _check_ot_memory(N: int, M: int, max_n: int = 4000) -> None:
+    """
+    Guard against N² memory explosion in dense OT/GWOT.
+
+    For N=M=4000: NxN float64 matrix ≈ 128MB. Two GW structural matrices
+    + cost + transport ≈ 512MB. Beyond that, POT will either OOM or be
+    impractically slow. Raise early with a clear message.
+    """
+    if N > max_n or M > max_n:
+        raise ValueError(
+            f"GWOT point set too large (N={N}, M={M}, max={max_n}). "
+            f"Dense GW requires O(N²) memory ({N*N*8/1e6:.0f}+{M*M*8/1e6:.0f} MB). "
+            "Reduce n_points or switch to 'nn' matcher."
+        )
+
+
 def build_local_distance_matrix(
     points: np.ndarray,
     radius: float,
 ) -> np.ndarray:
     """
-    Build local distance matrix with truncation at radius.
-    D[i,j] = |p_i - p_j| if < radius, else 0.
+    Build local distance matrix, capped at radius.
 
-    Used for Gromov-Wasserstein structural matching.
+    D[i,j] = min(|p_i - p_j|, radius)
+
+    *** IMPORTANT: cap (not zero) far-apart pairs. ***
+    In GW, D[i,j]=0 means points i and j are STRUCTURALLY IDENTICAL.
+    Setting D=0 for far pairs destroys the structural term — it tells the
+    solver these distant points have zero separation, which is the opposite
+    of what we want. Capping at radius says "at least this far apart".
 
     Args:
         points: (N, 3) point coordinates
-        radius: truncation radius (mm)
+        radius: cap value (mm); all distances clipped to [0, radius]
 
     Returns:
-        D: (N, N) truncated distance matrix
+        D: (N, N) capped distance matrix
     """
     D = cdist(points, points, metric="euclidean")
-    D[D > radius] = 0.0
+    np.clip(D, 0.0, radius, out=D)   # cap — NOT zero
     return D
+
+
 
 
 def nn_matching(
@@ -155,13 +178,18 @@ def ot_matching(
     points_tgt: np.ndarray,
     lambda_prior: float = 0.2,
     epsilon: float = 0.05,
-    lambda_mass: float = 1.0,
+    lambda_mass: float = 0.0,
     max_iter: int = 100,
 ) -> Dict:
     """
     Standard (non-Gromov) Optimal Transport matching.
 
-    Uses Sinkhorn with feature cost + spatial prior.
+    Uses balanced Sinkhorn (lambda_mass=0) or unbalanced Sinkhorn
+    (lambda_mass>0) with feature cost + spatial prior.
+
+    lambda_mass > 0 enables partial overlap / occlusion handling via
+    KL-divergence penalty on marginals (ot.unbalanced.sinkhorn_unbalanced).
+    Smaller lambda_mass = more unbalanced = more mass can appear/disappear.
 
     Returns dict with matches and transport matrix.
     """
@@ -169,25 +197,29 @@ def ot_matching(
         raise ImportError("POT is required for OT matching: pip install pot")
 
     N, M = len(desc_src), len(desc_tgt)
+    _check_ot_memory(N, M)
 
     # Cost matrix
     C_feat = compute_feature_cost(desc_src, desc_tgt)
     C_prior = compute_spatial_prior(points_src, points_tgt)
     C = C_feat + lambda_prior * C_prior
-
-    # Normalize cost
-    C = C / C.max()
+    C = C / (C.max() + 1e-8)
 
     # Uniform marginals
     a = np.ones(N) / N
     b = np.ones(M) / M
 
-    # Sinkhorn
-    P = ot.sinkhorn(
-        a, b, C, reg=epsilon, numItermax=max_iter, warn=False
-    )
+    if lambda_mass > 0:
+        # Unbalanced: KL penalty on marginals handles partial visibility
+        P = ot.unbalanced.sinkhorn_unbalanced(
+            a, b, C, reg=epsilon, reg_m=lambda_mass,
+            numItermax=max_iter, warn=False,
+        )
+    else:
+        P = ot.sinkhorn(a, b, C, reg=epsilon, numItermax=max_iter, warn=False)
 
     return _extract_matches_from_transport(P, N, M)
+
 
 
 def gwot_matching(
@@ -198,7 +230,7 @@ def gwot_matching(
     lambda_gw: float = 0.5,
     lambda_prior: float = 0.2,
     epsilon: float = 0.05,
-    lambda_mass: float = 1.0,
+    lambda_mass: float = 0.0,
     local_radius: float = 12.0,
     max_iter: int = 100,
 ) -> Dict:
@@ -207,20 +239,25 @@ def gwot_matching(
 
     Combines:
     - Feature similarity (cosine distance)
-    - Spatial structure preservation (GW term with local distance graphs)
+    - Spatial structure preservation (GW term — distance matrices CAPPED at radius)
     - Anatomical plausibility (spatial prior)
     - Entropic regularization
+
+    lambda_mass > 0 enables unbalanced/partial GW for partial overlap scenarios.
+    Balanced (lambda_mass=0) is the default.
+
+    Memory: O(N²) + O(M²). Use _check_ot_memory guard. Max N~4000.
 
     Args:
         desc_src: (N, D) source descriptors
         desc_tgt: (M, D) target descriptors
         points_src: (N, 3) source coordinates (mm)
         points_tgt: (M, 3) target coordinates (mm)
-        lambda_gw: weight for GW structural term
+        lambda_gw: weight for GW structural term (alpha = lambda_gw/(1+lambda_gw))
         lambda_prior: weight for spatial correspondence prior
         epsilon: entropic regularization
-        lambda_mass: unbalanced mass regularization (not used in balanced version)
-        local_radius: radius for local distance graphs (mm)
+        lambda_mass: >0 enables partial/unbalanced GW for partial overlap
+        local_radius: cap radius for structural distance matrices (mm)
         max_iter: max iterations
 
     Returns dict with:
@@ -230,42 +267,56 @@ def gwot_matching(
         raise ImportError("POT is required for GWOT matching: pip install pot")
 
     N, M = len(desc_src), len(desc_tgt)
+    _check_ot_memory(N, M)
 
-    # 1) Feature cost
+    # 1) Feature cost + spatial prior
     C_feat = compute_feature_cost(desc_src, desc_tgt)
     C_prior = compute_spatial_prior(points_src, points_tgt)
     C = C_feat + lambda_prior * C_prior
     C = C / (C.max() + 1e-8)
 
-    # 2) Spatial structure matrices (local distance graphs)
-    logger.info(f"Building local distance graphs (radius={local_radius}mm)...")
+    # 2) Structural matrices — CAPPED (not zeroed) at radius
+    # Zero-ing would tell GW that far-apart pairs are structurally identical.
+    logger.info(f"Building local distance graphs (radius={local_radius}mm, capped)...")
     D_src = build_local_distance_matrix(points_src, local_radius)
     D_tgt = build_local_distance_matrix(points_tgt, local_radius)
 
-    # Normalize
+    # Normalize to [0, 1]
     D_src = D_src / (D_src.max() + 1e-8)
     D_tgt = D_tgt / (D_tgt.max() + 1e-8)
 
-    # 3) Uniform marginals
+    # 3) Marginals
     a = np.ones(N) / N
     b = np.ones(M) / M
 
-    # 4) Fused Gromov-Wasserstein
-    logger.info(f"Running fused GW-OT (N={N}, M={M}, λ_gw={lambda_gw}, ε={epsilon})...")
-    alpha = lambda_gw / (1.0 + lambda_gw)  # POT's alpha is weight of GW vs linear
+    # 4) Fused GW — balanced or unbalanced
+    alpha = lambda_gw / (1.0 + lambda_gw)  # POT: alpha = weight of GW vs linear term
+    logger.info(f"Running fused GW-OT (N={N}, M={M}, λ_gw={lambda_gw}, ε={epsilon}, "
+                f"unbalanced={'yes' if lambda_mass > 0 else 'no'})...")
 
-    P = ot.gromov.fused_gromov_wasserstein(
-        M=C,
-        C1=D_src,
-        C2=D_tgt,
-        p=a,
-        q=b,
-        loss_fun="square_loss",
-        alpha=alpha,
-        armijo=False,
-        log=False,
-        numItermax=max_iter,
-    )
+    if lambda_mass > 0:
+        # Partial/unbalanced FGW — allows some points to go unmatched
+        # m = fraction of mass to transport (smaller = more unbalanced)
+        m = min(0.99, 1.0 / (1.0 + lambda_mass))
+        try:
+            P, _ = ot.gromov.partial_fused_gromov_wasserstein(
+                M=C, C1=D_src, C2=D_tgt, p=a, q=b,
+                m=m, loss_fun="square_loss", alpha=alpha,
+                numItermax=max_iter, log=True,
+            )
+        except Exception as e:
+            logger.warning(f"partial_fgw failed ({e}), falling back to balanced FGW")
+            P = ot.gromov.fused_gromov_wasserstein(
+                M=C, C1=D_src, C2=D_tgt, p=a, q=b,
+                loss_fun="square_loss", alpha=alpha,
+                armijo=False, log=False, numItermax=max_iter,
+            )
+    else:
+        P = ot.gromov.fused_gromov_wasserstein(
+            M=C, C1=D_src, C2=D_tgt, p=a, q=b,
+            loss_fun="square_loss", alpha=alpha,
+            armijo=False, log=False, numItermax=max_iter,
+        )
 
     result = _extract_matches_from_transport(P, N, M)
     result["transport_matrix"] = P

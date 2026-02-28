@@ -38,7 +38,14 @@ def load_nifti(path: Path) -> Tuple[np.ndarray, np.ndarray]:
 
 def load_keypoints_csv(csv_path: Path) -> np.ndarray:
     """
-    Load keypoint CSV (no header, 3 columns: x, y, z).
+    Load keypoint CSV (no header, 3 columns).
+
+    Keypoints are VOXEL INDICES in the same axis order as nibabel's
+    get_fdata() (i.e. dim0, dim1, dim2 of the stored volume).
+    ThoraxCBCT is 1mm isotropic — voxel indices == mm displacement.
+
+    This matches DINO-Reg's convention exactly: points are used directly
+    in map_coordinates without any axis permutation.
 
     Returns:
         keypoints: ndarray of shape (N, 3) — float64
@@ -78,6 +85,23 @@ def _case_id_from_path(path: str) -> str:
     return Path(path).stem.replace(".nii", "")
 
 
+def _find_mask(image_path: str, data_root: Path) -> Optional[Path]:
+    """
+    Derive the challenge-provided mask path from an image path.
+
+    ThoraxCBCT layout:
+      images:  {data_root}/imagesTr/case.nii.gz
+      masks:   {data_root}/masksTr/case.nii.gz
+
+    Replace 'images' with 'masks' in the subdirectory name.
+    Returns None if the mask file is not found.
+    """
+    rel = image_path.lstrip("./")              # e.g. "imagesTr/ThoraxCBCT_0000_0001.nii.gz"
+    mask_rel = rel.replace("images", "masks", 1)  # e.g. "masksTr/..."
+    mask_path = data_root / mask_rel
+    return mask_path if mask_path.exists() else None
+
+
 def _find_keypoints(case_id: str, data_root: Path) -> Optional[Path]:
     """
     Find keypoint CSV for a given case ID.
@@ -90,9 +114,11 @@ def _find_keypoints(case_id: str, data_root: Path) -> Optional[Path]:
     return None
 
 
+
 class ThoraxCBCTDataset:
     """
     ThoraxCBCT dataset with paired FBCT↔CBCT volumes.
+
 
     Naming convention:
     - ThoraxCBCT_XXXX_0000 = FBCT (moving)
@@ -142,15 +168,30 @@ class ThoraxCBCTDataset:
         fixed_kp = load_keypoints_csv(fixed_kp_path) if fixed_kp_path else None
         moving_kp = load_keypoints_csv(moving_kp_path) if moving_kp_path else None
 
+        # Load challenge-provided trunk masks (better than threshold-computed ones)
+        fixed_mask_path  = _find_mask(pair["fixed"],  self.data_root)
+        moving_mask_path = _find_mask(pair["moving"], self.data_root)
+
+        def _load_mask(p: Optional[Path]) -> Optional[np.ndarray]:
+            if p is None:
+                return None
+            arr, _ = load_nifti(p)
+            return (arr > 0).astype(np.uint8)
+
+        fixed_mask  = _load_mask(fixed_mask_path)
+        moving_mask = _load_mask(moving_mask_path)
+
         return {
-            "fixed_img": fixed_img,
-            "moving_img": moving_img,
-            "fixed_affine": fixed_aff,
-            "moving_affine": moving_aff,
+            "fixed_img":       fixed_img,
+            "moving_img":      moving_img,
+            "fixed_affine":    fixed_aff,
+            "moving_affine":   moving_aff,
             "fixed_keypoints": fixed_kp,
             "moving_keypoints": moving_kp,
-            "fixed_id": fixed_id,
-            "moving_id": moving_id,
+            "fixed_mask":       fixed_mask,
+            "moving_mask":      moving_mask,
+            "fixed_id":         fixed_id,
+            "moving_id":        moving_id,
         }
 
     def get_pair_info(self, idx: int) -> Dict[str, str]:

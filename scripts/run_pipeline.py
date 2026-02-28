@@ -47,6 +47,7 @@ from pipeline.matching.filters import filter_matches
 from pipeline.transform.fitter import DiffeomorphicFitter
 from pipeline.transform.warp import warp_points
 from pipeline.eval.metrics import compute_tre, compute_jacobian_stats, print_results
+from pipeline.viz.visualizer import PipelineVisualizer
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -117,16 +118,25 @@ def get_features(
     volume: np.ndarray,
     case_id: str,
     fuser: TriplanarFuser,
+    mask: np.ndarray = None,
 ):
-    """Extract or load cached tri-planar features for a volume."""
+    """Extract or load cached tri-planar features for a volume.
+
+    Args:
+        mask: pre-computed trunk mask (uint8, same shape as volume).
+              If None, generates one via thresholding (fallback only).
+    """
     cache_path = config.paths.feature_cache_dir / f"{case_id}_{config.features.backend}.npz"
 
     if config.features.use_cache and cache_path.exists():
         logger.info(f"Loading cached features: {cache_path}")
         return load_features(cache_path)
 
-    # Preprocess
-    mask = generate_trunk_mask(volume)
+    # Use provided mask or fall back to thresholding
+    if mask is None:
+        logger.info("  No dataset mask available — generating via thresholding (fallback)")
+        mask = generate_trunk_mask(volume)
+
     vol_norm = robust_intensity_normalize(volume, mask=mask)
 
     # Extract tri-planar features (returns tuple)
@@ -148,6 +158,7 @@ def sample_and_describe(
     downsample: int,
     keypoints: np.ndarray = None,
     rng: np.random.RandomState = None,
+    z_stratified: bool = True,
 ) -> tuple:
     """
     Sample points inside mask and extract descriptors.
@@ -157,7 +168,7 @@ def sample_and_describe(
     Returns:
         (voxel_pts, descriptors_normalized)
     """
-    voxel_pts = sample_points_in_mask(mask, n_points, rng=rng)
+    voxel_pts = sample_points_in_mask(mask, n_points, z_stratified=z_stratified, rng=rng)
 
     # Include Förstner keypoints if provided (as high-value anchors)
     if keypoints is not None:
@@ -211,6 +222,7 @@ def run_matching_stage(
         fixed_feats, fixed_feat_shape, fixed_orig_shape,
         fixed_mask, n_points, downsample,
         keypoints=fixed_keypoints, rng=rng,
+        z_stratified=config.sampling.z_stratified,
     )
 
     # Sample and describe moving points
@@ -219,6 +231,7 @@ def run_matching_stage(
         moving_feats, moving_feat_shape, moving_orig_shape,
         moving_mask, n_points, downsample,
         keypoints=moving_keypoints, rng=rng_m,
+        z_stratified=config.sampling.z_stratified,
     )
 
     # If we have a current displacement, warp moving points to align
@@ -259,13 +272,17 @@ def run_matching_stage(
         method=config.matcher.method, **match_kwargs
     )
 
-    # Filter matches WITH mask consistency
+    # Filter matches. Pass warped_moving_pts as points_src_geom so the
+    # displacement filter measures the RESIDUAL after warping (not the
+    # original full displacement). The returned matched_points_src always
+    # contains original (unwarped) moving coords — correct for the SVF fitter.
     filtered = filter_matches(
         match_result, moving_voxel_pts, fixed_voxel_pts,
         confidence_threshold=config.gwot.confidence_threshold,
         mask_src=moving_mask,
         mask_tgt=fixed_mask,
         max_displacement=150.0,  # reject physically implausible matches
+        points_src_geom=warped_moving_pts,  # geometry used during matching
     )
     logger.info(f"  [{stage_name}] Matches: {filtered['n_matches']} / {filtered['n_before_filter']}")
 
@@ -283,6 +300,7 @@ def run_pair(
     method: str = "mind",
     fuser: "TriplanarFuser" = None,
     downsample: int = 2,
+    visualize: bool = False,
 ) -> dict:
     """
     Run registration on a single pair.
@@ -308,12 +326,25 @@ def run_pair(
         initial_tre = compute_tre(data["moving_keypoints"], data["fixed_keypoints"])
         logger.info(f"Initial TRE: {initial_tre['mean_tre']:.3f} mm")
 
-    # Generate trunk masks
-    fixed_mask = generate_trunk_mask(fixed_img)
-    moving_mask = generate_trunk_mask(moving_img)
+    # Use challenge-provided masks when available; fall back to thresholding.
+    # Challenge masks are carefully segmented body contours — no table/artifact leakage.
+    # Using the same mask object for both feature extraction and point sampling ensures
+    # there is NO mismatch between where descriptors are computed and where points are drawn.
+    def _get_mask(img: np.ndarray, dataset_mask: np.ndarray) -> np.ndarray:
+        if dataset_mask is not None:
+            logger.info("  Using challenge-provided trunk mask")
+            return dataset_mask
+        logger.info("  Generating trunk mask via thresholding (challenge mask not found)")
+        return generate_trunk_mask(img)
+
+    fixed_mask  = _get_mask(fixed_img,  data.get("fixed_mask"))
+    moving_mask = _get_mask(moving_img, data.get("moving_mask"))
 
     D, H, W = fixed_img.shape
     total_matches = -1
+
+    viz = PipelineVisualizer(config.paths.output_dir, pair_idx, enabled=visualize)
+    viz.input(fixed_img, moving_img, data["fixed_keypoints"], data["moving_keypoints"])
 
     if method == "mind":
         # =============================================================
@@ -329,10 +360,10 @@ def run_pair(
             moving_img=moving_img,
             mind_r=1,
             mind_d=2,
-            lambda_weight=1.25,
-            grid_sp=6,
+            lambda_weight=0,     # Adam disabled: makes TRE worse in all grid_sp sweep results
+            grid_sp=4,           # Best from test_grid_sp.py sweep (9.772mm convex-only)
             disp_hw=4,
-            n_iter_adam=800,  # original DINO-Reg ThoraxCBCT default
+            n_iter_adam=0,
             grid_sp_adam=2,
             ic=True,
             device=config.device,
@@ -347,10 +378,13 @@ def run_pair(
 
         # Stage 1: Feature extraction
         logger.info("Stage 1: Feature extraction...")
-        fixed_result = get_features(config, fixed_img, data["fixed_id"], fuser)
-        moving_result = get_features(config, moving_img, data["moving_id"], fuser)
+        fixed_result  = get_features(config, fixed_img,  data["fixed_id"],  fuser, mask=fixed_mask)
+        moving_result = get_features(config, moving_img, data["moving_id"], fuser, mask=moving_mask)
         fixed_feats, fixed_feat_shape, fixed_orig_shape = fixed_result
         moving_feats, moving_feat_shape, moving_orig_shape = moving_result
+
+        viz.features(fixed_feats.transpose(1, 2, 3, 0),
+                     moving_feats.transpose(1, 2, 3, 0))
 
         # Stage 2+3: Sampling + Matching
         n_points = config.sampling.n_points_coarse
@@ -373,27 +407,37 @@ def run_pair(
 
         total_matches = match_result["n_matches"]
 
+        viz.matches(match_result, fixed_img, moving_img)
+
         # Stage 4: Diffeomorphic fitting
         logger.info(f"Stage 4: Diffeomorphic SVF fitting ({total_matches} matches)...")
         fitter = DiffeomorphicFitter(
+            volume_shape=(D, H, W),
             grid_spacings=config.fitting.grid_spacings,
             n_iters_per_level=config.fitting.n_iters_per_level,
             lambda_smooth=config.fitting.lambda_smooth,
-            lambda_jacobian=config.fitting.lambda_jacobian,
+            lambda_jac=config.fitting.lambda_jac,
             n_squaring_steps=config.fitting.n_squaring_steps,
             lr=config.fitting.lr,
-        )
-        displacement = fitter.fit(
-            source_pts=torch.from_numpy(match_result["source_pts"]).float(),
-            target_pts=torch.from_numpy(match_result["target_pts"]).float(),
-            volume_shape=(D, H, W),
             device=config.device,
+        )
+        # Convention: field must be fixed→moving (same as MIND baseline).
+        # match() was called as match(moving, fixed) so:
+        #   matched_points_src = moving points (where matching started)
+        #   matched_points_tgt = fixed points  (where matching landed)
+        # We want SVF d such that d(fixed_pt) ≈ moving_pt, so
+        # src=fixed, tgt=moving when calling the fitter.
+        displacement = fitter.fit(
+            matched_src=match_result["matched_points_tgt"],  # fixed pts → field origin
+            matched_tgt=match_result["matched_points_src"],  # moving pts → field target
+            weights=match_result["weights"],
         )
     else:
         raise ValueError(f"Unknown method: {method}")
 
     logger.info(f"  Displacement: max={displacement.abs().max().item():.1f}, "
                 f"mean={displacement.abs().mean().item():.1f}")
+    viz.displacement(displacement, fixed_img)
 
     # =========================================================
     # DIAGNOSTICS: Use DINO-Reg evaluation convention
@@ -509,6 +553,9 @@ def run_pair(
     jac_stats = compute_jacobian_stats(displacement)
     results["jac_stats"] = jac_stats
 
+    viz.output(fixed_img, moving_img, displacement,
+               data["fixed_keypoints"], data["moving_keypoints"])
+
     logger.info(f"Total runtime: {results['runtime_seconds']:.1f}s")
     return results
 
@@ -530,6 +577,8 @@ def main():
     parser.add_argument("--downsample", type=int, default=2, help="Volume downsample factor")
     parser.add_argument("--no-intensity-refine", action="store_true",
                         help="Skip intensity refinement")
+    parser.add_argument("--visualize", action="store_true",
+                        help="Save diagnostic PNG panels to output/viz/pair_XX/")
     args = parser.parse_args()
 
     # Config
@@ -561,11 +610,13 @@ def main():
 
     # Run
     if args.pair is not None:
-        results = [run_pair(config, dataset, args.pair, args.method, fuser, args.downsample)]
+        results = [run_pair(config, dataset, args.pair, args.method, fuser, args.downsample,
+                            visualize=args.visualize)]
     else:
         results = []
         for i in range(len(dataset)):
-            r = run_pair(config, dataset, i, args.method, fuser, args.downsample)
+            r = run_pair(config, dataset, i, args.method, fuser, args.downsample,
+                         visualize=args.visualize)
             results.append(r)
 
     # Summary

@@ -81,11 +81,12 @@ def main():
             extractor,
             batch_size=config.features.slice_batch_size,
             fusion=config.features.fusion_method,
+            downsample=2,
             device=config.device,
         )
 
         for i in range(len(dataset)):
-            r = run_pair(config, dataset, i, fuser)
+            r = run_pair(config, dataset, i, method="sparse", fuser=fuser, downsample=2)
             r["variant"] = variant["name"]
             all_results.append(r)
 

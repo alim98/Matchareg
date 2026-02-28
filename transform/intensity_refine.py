@@ -30,6 +30,14 @@ def local_ncc_loss(
     """
     Local Normalized Cross-Correlation loss.
 
+    avg_pool3d computes LOCAL MEANS (E[·]), not sums. The NCC formula
+    in terms of means is:
+
+        cross = E[fw] - E[f]*E[w]              = Cov(f, w)
+        f_var = E[f²] - E[f]²                  = Var(f)
+        w_var = E[w²] - E[w]²                  = Var(w)
+        NCC   = cross / sqrt(f_var * w_var)
+
     Args:
         fixed: (1, 1, D, H, W) fixed image
         warped: (1, 1, D, H, W) warped moving image
@@ -39,38 +47,27 @@ def local_ncc_loss(
     Returns:
         loss: scalar (1 - mean NCC), lower is better
     """
-    ndims = 3
     pad = win_size // 2
-
-    # Local sums using average pooling
     pool = F.avg_pool3d
-    
-    # Sum of elements in window
+
     f = fixed
     w = warped
-    
+
     if mask is not None:
         f = f * mask
         w = w * mask
-    
-    f2 = f * f
-    w2 = w * w
-    fw = f * w
 
-    f_sum = pool(f, win_size, stride=1, padding=pad)
-    w_sum = pool(w, win_size, stride=1, padding=pad)
-    f2_sum = pool(f2, win_size, stride=1, padding=pad)
-    w2_sum = pool(w2, win_size, stride=1, padding=pad)
-    fw_sum = pool(fw, win_size, stride=1, padding=pad)
+    # avg_pool3d → local means (E[·] per window)
+    E_f  = pool(f,     win_size, stride=1, padding=pad)
+    E_w  = pool(w,     win_size, stride=1, padding=pad)
+    E_f2 = pool(f * f, win_size, stride=1, padding=pad)
+    E_w2 = pool(w * w, win_size, stride=1, padding=pad)
+    E_fw = pool(f * w, win_size, stride=1, padding=pad)
 
-    win_vol = win_size ** ndims
-
-    f_mean = f_sum
-    w_mean = w_sum
-
-    cross = fw_sum - f_mean * w_mean * win_vol
-    f_var = f2_sum - f_mean * f_mean * win_vol
-    w_var = w2_sum - w_mean * w_mean * win_vol
+    # Pearson NCC per window using means — NO win_vol multiplier
+    cross = E_fw - E_f * E_w            # Cov(f, w)
+    f_var = E_f2 - E_f * E_f            # Var(f)
+    w_var = E_w2 - E_w * E_w            # Var(w)
 
     denom = torch.sqrt(f_var.clamp(min=1e-5) * w_var.clamp(min=1e-5))
     ncc = cross / denom
@@ -79,8 +76,9 @@ def local_ncc_loss(
         mask_pool = pool(mask, win_size, stride=1, padding=pad)
         ncc = ncc * (mask_pool > 0.5).float()
         return 1.0 - ncc[mask_pool > 0.5].mean()
-    
+
     return 1.0 - ncc.mean()
+
 
 
 def intensity_refinement(

@@ -244,7 +244,7 @@ class DINOv3Extractor:
             n_layers: number of last layers to return (fused by averaging)
 
         Returns:
-            features: Tensor of shape (B, embed_dim, H//16, W//16)
+            features: Tensor of shape (B, embed_dim, H//16, W//16)  — channel-first
         """
         B, C, H, W = images.shape
         pad_h = (self.patch_size - H % self.patch_size) % self.patch_size
