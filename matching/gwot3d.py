@@ -312,11 +312,27 @@ def gwot_matching(
                 armijo=False, log=False, numItermax=max_iter,
             )
     else:
-        P = ot.gromov.fused_gromov_wasserstein(
-            M=C, C1=D_src, C2=D_tgt, p=a, q=b,
-            loss_fun="square_loss", alpha=alpha,
-            armijo=False, log=False, numItermax=max_iter,
-        )
+        # Use entropic FGW so epsilon is actually applied.
+        # ot.gromov.fused_gromov_wasserstein is conditional-gradient (no epsilon).
+        # ot.gromov.entropic_fused_gromov_wasserstein is the entropy-regularized version.
+        try:
+            P = ot.gromov.entropic_fused_gromov_wasserstein(
+                M=C, C1=D_src, C2=D_tgt, p=a, q=b,
+                loss_fun="square_loss", epsilon=epsilon, alpha=alpha,
+                numItermax=max_iter,
+            )
+        except AttributeError:
+            # Older POT versions may not have this — fall back with a warning
+            logger.warning(
+                "ot.gromov.entropic_fused_gromov_wasserstein not found in this POT version. "
+                "Falling back to conditional-gradient FGW (epsilon will be ignored). "
+                "Upgrade POT: pip install pot --upgrade"
+            )
+            P = ot.gromov.fused_gromov_wasserstein(
+                M=C, C1=D_src, C2=D_tgt, p=a, q=b,
+                loss_fun="square_loss", alpha=alpha,
+                armijo=False, log=False, numItermax=max_iter,
+            )
 
     result = _extract_matches_from_transport(P, N, M)
     result["transport_matrix"] = P
@@ -338,7 +354,15 @@ def _extract_matches_from_transport(
     """
     # Forward: each source's best target
     fwd_idx = np.argmax(P, axis=1)  # (N,)
-    fwd_val = P[np.arange(N), fwd_idx]
+    fwd_val = P[np.arange(N), fwd_idx]   # raw transport ≈ 1/N for balanced OT
+
+    # Normalize by row sum → confidence = fraction of source mass at best match.
+    # Raw transport values for balanced OT with N points are ≈ 1/N (e.g. 5e-4
+    # for N=2000). The confidence_threshold=0.01 in filter_matches would kill
+    # everything. Normalizing by row sum rescales to (0, 1] regardless of N,
+    # making it directly comparable to NN's cosine-similarity weights.
+    row_sum = P.sum(axis=1) + 1e-12    # ≈ 1/N for balanced OT
+    fwd_confidence = fwd_val / row_sum  # ∈ (0, 1]
 
     # Backward: each target's best source
     bwd_idx = np.argmax(P, axis=0)  # (M,)
@@ -349,7 +373,7 @@ def _extract_matches_from_transport(
 
     matches_src = src_indices[mutual]
     matches_tgt = fwd_idx[mutual]
-    weights = fwd_val[mutual]
+    weights = fwd_confidence[mutual]   # normalized ∈ (0, 1]
 
     if top_k is not None and len(matches_src) > top_k:
         top_indices = np.argsort(-weights)[:top_k]
@@ -362,6 +386,7 @@ def _extract_matches_from_transport(
         "matches_tgt_idx": matches_tgt,
         "weights": weights,
     }
+
 
 
 def match(

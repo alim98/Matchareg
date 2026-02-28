@@ -11,18 +11,20 @@ from ..transform.warp import compute_jacobian_determinant
 
 
 def compute_tre(
-    keypoints_src: np.ndarray,
-    keypoints_tgt: np.ndarray,
+    moving_keypoints: np.ndarray,
+    fixed_keypoints: np.ndarray,
     displacement: Optional[torch.Tensor] = None,
 ) -> Dict[str, float]:
     """
     Compute Target Registration Error (TRE) on keypoint pairs.
 
-    TRE = ||φ(x_k) - y_k|| for each keypoint pair.
+    Uses DINO-Reg convention:
+    Sample displacement field at fixed keypoints.
+    TRE = ||(fixed_keypoints + d(fixed_keypoints)) - moving_keypoints||
 
     Args:
-        keypoints_src: (K, 3) source keypoints in voxel coords
-        keypoints_tgt: (K, 3) target keypoints in voxel coords
+        moving_keypoints: (K, 3) target keypoints in voxel coords
+        fixed_keypoints: (K, 3) source keypoints in voxel coords
         displacement: optional (1, 3, D, H, W) displacement field.
                       If None, computes initial (unregistered) TRE.
 
@@ -31,13 +33,19 @@ def compute_tre(
         (assumes 1mm isotropic voxels for ThoraxCBCT).
     """
     if displacement is not None:
-        from ..transform.warp import warp_points
-        warped_src = warp_points(keypoints_src, displacement)
+        from scipy.ndimage import map_coordinates as mc
+        disp_np = displacement.cpu().numpy()
+        fixed_disp = np.zeros_like(fixed_keypoints)
+        for ax in range(3):
+            fixed_disp[:, ax] = mc(
+                disp_np[0, ax],
+                [fixed_keypoints[:, 0], fixed_keypoints[:, 1], fixed_keypoints[:, 2]],
+                order=1, mode='nearest',
+            )
+        warped_fixed = fixed_keypoints + fixed_disp
+        errors = np.linalg.norm(warped_fixed - moving_keypoints, axis=1)
     else:
-        warped_src = keypoints_src.copy()
-
-    # Euclidean distance per keypoint
-    errors = np.linalg.norm(warped_src - keypoints_tgt, axis=1)
+        errors = np.linalg.norm(fixed_keypoints - moving_keypoints, axis=1)
 
     return {
         "mean_tre": float(np.mean(errors)),

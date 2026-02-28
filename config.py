@@ -47,11 +47,16 @@ class FeatureConfig:
 @dataclass
 class SamplingConfig:
     """Point sampling settings."""
-    n_points_coarse: int = 8000
+    n_points_coarse: int = 8000   # for NN matching (O(N log N) or O(N·M))
     n_points_medium: int = 15000
     n_points_fine: int = 25000
+    n_points_ot: int = 2000        # for OT/GWOT — O(N²) memory, must stay small
     z_stratified: bool = True
-    include_keypoints: bool = True  # include provided Förstner keypoints
+    include_keypoints: bool = False  # inject Förstner keypoints as matching anchors
+    # WARNING: ThoraxCBCT has ~30k keypoints per volume — adding all of them will
+    # crash OT/GWOT and bias NN. Use n_keypoint_anchors to cap the injection.
+    # At test time no keypoints will be available, so keep this disabled by default.
+    n_keypoint_anchors: int = 0    # max keypoints to inject (0 = disabled)
 
 
 @dataclass
@@ -61,7 +66,7 @@ class GWOTConfig:
     lambda_gw: float = 0.5  # spatial smoothness strength
     lambda_prior: float = 0.2  # anatomical plausibility prior
     epsilon: float = 0.05  # entropic regularization
-    lambda_mass: float = 1.0  # unbalanced mass regularization
+    lambda_mass: float = 0.0  # 0 = balanced (default); >0 = unbalanced/partial OT
     max_iter: int = 100  # GWOT solver iterations
 
     # Confidence filtering
@@ -85,8 +90,15 @@ class FittingConfig:
     n_iters_per_level: int = 200
     n_squaring_steps: int = 7
 
-    # Alternation
-    n_outer_iters: int = 3  # GWOT ↔ fit alternations
+    # GWOT ↔ SVF alternation loop.
+    # n_outer_iters=1: single pass (match once, fit once) — default/backward-compatible.
+    # n_outer_iters>1: repeat (warp moving pts → re-match → refit) N times.
+    # Point count escalates coarse→medium→fine across iterations for NN matcher.
+    n_outer_iters: int = 1
+
+    # Intensity refinement (local NCC) after correspondence fitting.
+    # Kept separate from n_outer_iters — was previously wrongly conflated.
+    intensity_refine: bool = False
 
 
 @dataclass

@@ -55,24 +55,23 @@ def robust_intensity_normalize(
 
 def generate_trunk_mask(
     volume: np.ndarray,
-    threshold_pct: float = 10.0,
+    threshold: float = -500.0,
     min_component_size: int = 10000,
 ) -> np.ndarray:
     """
     Generate a simple trunk/body mask via thresholding + morphology.
 
-    Uses Otsu-like percentile thresholding on the intensity histogram,
-    followed by binary closing and largest-component selection.
+    Uses a fixed HU intensity threshold (e.g., -500) to separate body from 
+    background air, followed by binary closing and largest-component selection.
 
     Args:
-        volume: 3D array (D, H, W)
-        threshold_pct: percentile threshold (values above this are body)
+        volume: 3D array (D, H, W) in physical intensities (e.g. HU)
+        threshold: fixed intensity threshold (values above this are body)
         min_component_size: minimum connected component size to keep
 
     Returns:
         Binary mask (uint8), same shape as volume.
     """
-    threshold = np.percentile(volume, threshold_pct)
     mask = (volume > threshold).astype(np.uint8)
 
     # Binary closing to fill small holes
@@ -87,8 +86,10 @@ def generate_trunk_mask(
         largest = np.argmax(component_sizes)
         mask = (labeled == largest).astype(np.uint8)
 
-    # Final fill
-    mask = ndimage.binary_fill_holes(mask).astype(np.uint8)
+    # Final fill: slice-by-slice (axial) instead of 3D, to avoid filling the 
+    # entire background if the FOV boundary creates a closed 3D shell.
+    for z in range(mask.shape[0]):
+        mask[z] = ndimage.binary_fill_holes(mask[z]).astype(np.uint8)
     return mask
 
 

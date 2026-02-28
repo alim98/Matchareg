@@ -14,6 +14,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def convert_hf_to_native(hf_state: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -210,7 +213,7 @@ class DINOv3Extractor:
 
             # Convert HF format if needed
             if is_hf_format(state_dict):
-                print("Converting HuggingFace weights to native DINOv3 format...")
+                logger.info("Converting HuggingFace weights to native DINOv3 format...")
                 state_dict = convert_hf_to_native(state_dict)
 
             # Load with strict=False to skip buffers like rope_embed.periods
@@ -220,13 +223,14 @@ class DINOv3Extractor:
                 # Filter out expected missing buffers
                 real_missing = [k for k in missing if "rope_embed" not in k]
                 if real_missing:
-                    print(f"Warning: missing keys: {real_missing}")
+                    logger.warning(f"Warning: missing keys: {real_missing}")
             if unexpected:
-                print(f"Warning: unexpected keys: {unexpected}")
+                logger.warning(f"Warning: unexpected keys: {unexpected}")
 
-            print("DINOv3 weights loaded successfully.")
+            logger.info("DINOv3 weights loaded successfully.")
         else:
             model = dinov3_vitb16(pretrained=True)
+            logger.info("DINOv3 weights loaded from default pretrained repository.")
 
         return model
 

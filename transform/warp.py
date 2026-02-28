@@ -85,6 +85,7 @@ def warp_points(
 
 def compute_jacobian_determinant(
     displacement: torch.Tensor,
+    spacing: float = 1.0,
 ) -> torch.Tensor:
     """
     Compute the Jacobian determinant of a displacement field.
@@ -96,6 +97,7 @@ def compute_jacobian_determinant(
 
     Args:
         displacement: (1, 3, D, H, W) in voxel units
+        spacing: float physical separation between points
 
     Returns:
         jac_det: (1, 1, D, H, W) Jacobian determinant
@@ -110,19 +112,19 @@ def compute_jacobian_determinant(
     dx = torch.zeros_like(disp)
 
     # d/dz (dim=2)
-    dz[:, :, 1:-1] = (disp[:, :, 2:] - disp[:, :, :-2]) / 2
-    dz[:, :, 0] = disp[:, :, 1] - disp[:, :, 0]
-    dz[:, :, -1] = disp[:, :, -1] - disp[:, :, -2]
+    dz[:, :, 1:-1] = (disp[:, :, 2:] - disp[:, :, :-2]) / (2.0 * spacing)
+    dz[:, :, 0] = (disp[:, :, 1] - disp[:, :, 0]) / spacing
+    dz[:, :, -1] = (disp[:, :, -1] - disp[:, :, -2]) / spacing
 
     # d/dy (dim=3)
-    dy[:, :, :, 1:-1] = (disp[:, :, :, 2:] - disp[:, :, :, :-2]) / 2
-    dy[:, :, :, 0] = disp[:, :, :, 1] - disp[:, :, :, 0]
-    dy[:, :, :, -1] = disp[:, :, :, -1] - disp[:, :, :, -2]
+    dy[:, :, :, 1:-1] = (disp[:, :, :, 2:] - disp[:, :, :, :-2]) / (2.0 * spacing)
+    dy[:, :, :, 0] = (disp[:, :, :, 1] - disp[:, :, :, 0]) / spacing
+    dy[:, :, :, -1] = (disp[:, :, :, -1] - disp[:, :, :, -2]) / spacing
 
     # d/dx (dim=4)
-    dx[:, :, :, :, 1:-1] = (disp[:, :, :, :, 2:] - disp[:, :, :, :, :-2]) / 2
-    dx[:, :, :, :, 0] = disp[:, :, :, :, 1] - disp[:, :, :, :, 0]
-    dx[:, :, :, :, -1] = disp[:, :, :, :, -1] - disp[:, :, :, :, -2]
+    dx[:, :, :, :, 1:-1] = (disp[:, :, :, :, 2:] - disp[:, :, :, :, :-2]) / (2.0 * spacing)
+    dx[:, :, :, :, 0] = (disp[:, :, :, :, 1] - disp[:, :, :, :, 0]) / spacing
+    dx[:, :, :, :, -1] = (disp[:, :, :, :, -1] - disp[:, :, :, :, -2]) / spacing
 
     # Jacobian matrix (3x3 at each voxel)
     # J = I + grad(displacement)

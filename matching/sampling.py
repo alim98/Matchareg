@@ -115,26 +115,47 @@ def sample_descriptors_at_points(
     Returns:
         descriptors: (N, feat_dim)
     """
-    from scipy.ndimage import map_coordinates
+    import torch
+    import torch.nn.functional as F
 
     feat_dim = feature_volume.shape[0]
+    D, H, W = feature_volume.shape[1], feature_volume.shape[2], feature_volume.shape[3]
     N = points.shape[0]
 
-    # Clip to valid range
-    coords = points.copy()
-    coords[:, 0] = np.clip(coords[:, 0], 0, feature_volume.shape[1] - 1)
-    coords[:, 1] = np.clip(coords[:, 1], 0, feature_volume.shape[2] - 1)
-    coords[:, 2] = np.clip(coords[:, 2], 0, feature_volume.shape[3] - 1)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Trilinear interpolation for each feature channel
-    descriptors = np.zeros((N, feat_dim), dtype=np.float32)
-    for c in range(feat_dim):
-        descriptors[:, c] = map_coordinates(
-            feature_volume[c],
-            [coords[:, 0], coords[:, 1], coords[:, 2]],
-            order=1,  # trilinear
-            mode='nearest',
-        )
+    # Convert to torch tensor with batch and spatial dims
+    # feature_volume: (C, D, H, W) -> (1, C, D, H, W)
+    vol_t = torch.from_numpy(feature_volume).unsqueeze(0).float().to(device)
+
+    # grid_sample expects coordinates normalized to [-1, 1], with order (x, y, z)
+    # Our points are (z, y, x) in pixels
+    pts_t = torch.from_numpy(points).float().to(device)
+    x = pts_t[:, 2]
+    y = pts_t[:, 1]
+    z = pts_t[:, 0]
+
+    # Normalize to [-1, 1] range: 2 * (coord / (size - 1)) - 1
+    # where size > 1 is checked to avoid div by zero (already guaranteed here)
+    nx = 2.0 * x / max(W - 1, 1) - 1.0
+    ny = 2.0 * y / max(H - 1, 1) - 1.0
+    nz = 2.0 * z / max(D - 1, 1) - 1.0
+
+    # Grid shape: (N, 1, 1, 3) -> stack as (x, y, z) inside the grid tensor
+    grid = torch.stack([nx, ny, nz], dim=-1).view(1, N, 1, 1, 3)
+
+    # Sample descriptor
+    # Note: align_corners=True matches scipy's map_coordinates behavior for pixel grids
+    sampled = F.grid_sample(
+        vol_t,
+        grid,
+        mode="bilinear",        # In 3D this performs trilinear interpolation
+        padding_mode="border",  # Equivalent to mode='nearest' used in map_coordinates clip
+        align_corners=True
+    )
+    
+    # sampled is (1, C, N, 1, 1) -> view to (N, C)
+    descriptors = sampled.view(feat_dim, N).transpose(0, 1).cpu().numpy()
 
     return descriptors
 

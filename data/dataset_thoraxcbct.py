@@ -85,47 +85,42 @@ def _case_id_from_path(path: str) -> str:
     return Path(path).stem.replace(".nii", "")
 
 
-def _find_mask(image_path: str, data_root: Path) -> Optional[Path]:
+def _keypoint_dir_for_pair(fixed_id: str) -> Optional[str]:
     """
-    Derive the challenge-provided mask path from an image path.
+    Return the keypoints subdirectory for a registration pair based on the
+    fixed image suffix.
 
-    ThoraxCBCT layout:
-      images:  {data_root}/imagesTr/case.nii.gz
-      masks:   {data_root}/masksTr/case.nii.gz
+    ThoraxCBCT subtask layout:
+      Subtask 1: FBCT(_0000) ↔ CBCT-begin(_0001) → keypoints01Tr
+      Subtask 2: FBCT(_0000) ↔ CBCT-end  (_0002) → keypoints02Tr
 
-    Replace 'images' with 'masks' in the subdirectory name.
-    Returns None if the mask file is not found.
+    IMPORTANT: the FBCT (_0000) appears in BOTH directories but with
+    DIFFERENT correspondences. You must pick the directory that matches
+    the CBCT (fixed) image — not just whichever file exists first.
     """
-    rel = image_path.lstrip("./")              # e.g. "imagesTr/ThoraxCBCT_0000_0001.nii.gz"
-    mask_rel = rel.replace("images", "masks", 1)  # e.g. "masksTr/..."
-    mask_path = data_root / mask_rel
-    return mask_path if mask_path.exists() else None
-
-
-def _find_keypoints(case_id: str, data_root: Path) -> Optional[Path]:
-    """
-    Find keypoint CSV for a given case ID.
-    Searches in keypoints01Tr and keypoints02Tr.
-    """
-    for kp_dir in ["keypoints01Tr", "keypoints02Tr"]:
-        csv_path = data_root / kp_dir / f"{case_id}.csv"
-        if csv_path.exists():
-            return csv_path
+    if fixed_id.endswith("_0001"):
+        return "keypoints01Tr"
+    elif fixed_id.endswith("_0002"):
+        return "keypoints02Tr"
     return None
-
 
 
 class ThoraxCBCTDataset:
     """
     ThoraxCBCT dataset with paired FBCT↔CBCT volumes.
 
-
     Naming convention:
     - ThoraxCBCT_XXXX_0000 = FBCT (moving)
-    - ThoraxCBCT_XXXX_0001 = CBCT session 1 (fixed)
-    - ThoraxCBCT_XXXX_0002 = CBCT session 2 (fixed)
+    - ThoraxCBCT_XXXX_0001 = CBCT session 1 (fixed, subtask 1)
+    - ThoraxCBCT_XXXX_0002 = CBCT session 2 (fixed, subtask 2)
 
     Registration direction: moving (FBCT, _0000) → fixed (CBCT, _0001 or _0002)
+
+    Keypoints: provided in keypoints01Tr (subtask 1) and keypoints02Tr (subtask 2).
+    Both fixed and moving keypoints for a pair come from the same subtask directory.
+
+    Masks: NOT provided in this dataset release. Trunk masks are computed
+    on-the-fly via thresholding in run_pipeline.py.
     """
 
     def __init__(self, data_root: Path, split: str = "train"):
@@ -146,50 +141,41 @@ class ThoraxCBCTDataset:
             - moving_img: ndarray (D, H, W)
             - fixed_affine: 4x4 ndarray
             - moving_affine: 4x4 ndarray
-            - fixed_keypoints: ndarray (N, 3) or None
-            - moving_keypoints: ndarray (N, 3) or None
+            - fixed_keypoints: ndarray (N, 3) in (dim0,dim1,dim2)=(z,y,x) order, or None
+            - moving_keypoints: ndarray (N, 3) same convention, or None
             - fixed_id: str
             - moving_id: str
         """
         pair = self.pairs[idx]
-        fixed_path = _resolve_path(pair["fixed"], self.data_root)
+        fixed_path  = _resolve_path(pair["fixed"],  self.data_root)
         moving_path = _resolve_path(pair["moving"], self.data_root)
 
-        fixed_img, fixed_aff = load_nifti(fixed_path)
+        fixed_img,  fixed_aff  = load_nifti(fixed_path)
         moving_img, moving_aff = load_nifti(moving_path)
 
-        fixed_id = _case_id_from_path(pair["fixed"])
+        fixed_id  = _case_id_from_path(pair["fixed"])
         moving_id = _case_id_from_path(pair["moving"])
 
-        # Load keypoints if available
-        fixed_kp_path = _find_keypoints(fixed_id, self.data_root)
-        moving_kp_path = _find_keypoints(moving_id, self.data_root)
+        # Determine the correct keypoint directory from the fixed image's subtask.
+        # Both fixed and moving keypoints for a pair live in the SAME directory.
+        kp_dir = _keypoint_dir_for_pair(fixed_id)
 
-        fixed_kp = load_keypoints_csv(fixed_kp_path) if fixed_kp_path else None
-        moving_kp = load_keypoints_csv(moving_kp_path) if moving_kp_path else None
-
-        # Load challenge-provided trunk masks (better than threshold-computed ones)
-        fixed_mask_path  = _find_mask(pair["fixed"],  self.data_root)
-        moving_mask_path = _find_mask(pair["moving"], self.data_root)
-
-        def _load_mask(p: Optional[Path]) -> Optional[np.ndarray]:
-            if p is None:
+        def _load_kp(case_id: str) -> Optional[np.ndarray]:
+            if kp_dir is None:
                 return None
-            arr, _ = load_nifti(p)
-            return (arr > 0).astype(np.uint8)
+            p = self.data_root / kp_dir / f"{case_id}.csv"
+            return load_keypoints_csv(p) if p.exists() else None
 
-        fixed_mask  = _load_mask(fixed_mask_path)
-        moving_mask = _load_mask(moving_mask_path)
+        fixed_kp  = _load_kp(fixed_id)
+        moving_kp = _load_kp(moving_id)
 
         return {
-            "fixed_img":       fixed_img,
-            "moving_img":      moving_img,
-            "fixed_affine":    fixed_aff,
-            "moving_affine":   moving_aff,
-            "fixed_keypoints": fixed_kp,
+            "fixed_img":        fixed_img,
+            "moving_img":       moving_img,
+            "fixed_affine":     fixed_aff,
+            "moving_affine":    moving_aff,
+            "fixed_keypoints":  fixed_kp,
             "moving_keypoints": moving_kp,
-            "fixed_mask":       fixed_mask,
-            "moving_mask":      moving_mask,
             "fixed_id":         fixed_id,
             "moving_id":        moving_id,
         }
@@ -198,11 +184,12 @@ class ThoraxCBCTDataset:
         """Get pair metadata without loading volumes."""
         pair = self.pairs[idx]
         return {
-            "fixed": pair["fixed"],
-            "moving": pair["moving"],
-            "fixed_id": _case_id_from_path(pair["fixed"]),
+            "fixed":     pair["fixed"],
+            "moving":    pair["moving"],
+            "fixed_id":  _case_id_from_path(pair["fixed"]),
             "moving_id": _case_id_from_path(pair["moving"]),
         }
 
     def __repr__(self) -> str:
         return f"ThoraxCBCTDataset(split={self.split}, n_pairs={len(self)})"
+

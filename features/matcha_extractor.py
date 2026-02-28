@@ -11,6 +11,8 @@ from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import logging
+logger = logging.getLogger(__name__)
 
 
 class MATCHAExtractor:
@@ -56,10 +58,12 @@ class MATCHAExtractor:
         model = MatchaFeature(config=config)
 
         # Load pretrained weights
+        logger.info(f"Loading MATCHA weights from {weights_path}")
         state_dict = torch.load(weights_path, map_location=self.device)
         if "state_dict" in state_dict:
             state_dict = state_dict["state_dict"]
         model.load_state_dict(state_dict, strict=False)
+        logger.info("MATCHA weights loaded successfully.")
 
         return model
 

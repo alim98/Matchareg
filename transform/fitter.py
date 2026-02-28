@@ -30,8 +30,8 @@ class DiffeomorphicFitter:
         self,
         volume_shape: tuple,
         grid_spacings: List[float] = [10.0, 6.0, 3.0],
-        lambda_smooth: float = 1.0,
-        lambda_jac: float = 0.1,
+        lambda_smooth: float = 2.0,
+        lambda_jac: float = 10.0,
         lr: float = 1e-3,
         n_iters_per_level: int = 200,
         n_squaring_steps: int = 7,
@@ -131,9 +131,12 @@ class DiffeomorphicFitter:
             device=self.device,
         )
 
-        optimizer = torch.optim.Adam(svf.parameters(), lr=self.lr)
+        # Scale the learning rate physically by grid spacing so changes to the coarse 
+        # grid map to meaningful voxel-scale updates rather than getting stuck.
+        scaled_lr = self.lr * grid_spacing
+        optimizer = torch.optim.Adam(svf.parameters(), lr=scaled_lr)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=self.n_iters_per_level, eta_min=self.lr * 0.01
+            optimizer, T_max=self.n_iters_per_level, eta_min=scaled_lr * 0.01
         )
 
         best_loss = float("inf")
@@ -149,13 +152,15 @@ class DiffeomorphicFitter:
             # Correspondence loss: weighted Huber loss (robust to outlier matches)
             warped = self._warp_points_differentiable(src_pts, disp)
             residuals = torch.norm(warped - tgt_pts, dim=1)  # per-point distance
-            # Huber: quadratic for small residuals, linear for large (outliers)
-            delta = 10.0  # voxels — transition point
+            # Huber loss: prevents extreme outliers from ripping the vector field
+            # Delta tuned to target mean correspondence error
+            delta = 2.0  # voxels — transition point
             huber = torch.where(
                 residuals < delta,
                 0.5 * residuals ** 2,
                 delta * (residuals - 0.5 * delta),
             )
+            # Normalize by total points to make lambda tuning resolution-invariant
             loss_corr = (weights * huber).sum()
 
             # Smoothness regularization
@@ -209,9 +214,9 @@ class DiffeomorphicFitter:
 
         # Normalize point coordinates to [-1, 1] for grid_sample
         pts_norm = torch.zeros_like(points)
-        pts_norm[:, 0] = points[:, 2] / (W - 1) * 2 - 1  # x
-        pts_norm[:, 1] = points[:, 1] / (H - 1) * 2 - 1  # y
-        pts_norm[:, 2] = points[:, 0] / (D - 1) * 2 - 1  # z
+        pts_norm[:, 0] = points[:, 2] / (W - 1) * 2 - 1  # x (W)
+        pts_norm[:, 1] = points[:, 1] / (H - 1) * 2 - 1  # y (H)
+        pts_norm[:, 2] = points[:, 0] / (D - 1) * 2 - 1  # z (D)
 
         # Reshape for grid_sample: (1, 1, 1, N, 3)
         grid = pts_norm.unsqueeze(0).unsqueeze(0).unsqueeze(0)
@@ -238,7 +243,7 @@ class DiffeomorphicFitter:
         """
         # Subsample the displacement field
         disp_sub = displacement[:, :, ::subsample, ::subsample, ::subsample]
-        jac_det = compute_jacobian_determinant(disp_sub)
+        jac_det = compute_jacobian_determinant(disp_sub, spacing=float(subsample))
 
         # Penalize values below 0 (folding)
         neg_jac = F.relu(-jac_det)

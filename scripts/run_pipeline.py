@@ -49,10 +49,61 @@ from pipeline.transform.warp import warp_points
 from pipeline.eval.metrics import compute_tre, compute_jacobian_stats, print_results
 from pipeline.viz.visualizer import PipelineVisualizer
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+import functools
+
+log_file = PROJECT_ROOT / "pipeline_run.log"
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s: %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(log_file, mode='w')
+    ]
+)
 logger = logging.getLogger(__name__)
 
+def log_and_validate(func):
+    """Decorator to comprehensively log function execution, validate arrays, and track time."""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        logger.info(f"==> Starting [ {func.__name__} ]")
+        t_start = time.time()
+        
+        # Log input shapes if they are arrays/tensors
+        for i, a in enumerate(args):
+            if hasattr(a, 'shape'):
+                logger.info(f"    arg{i}.shape: {a.shape}, min: {a.min() if hasattr(a, 'min') else 'N/A'}, max: {a.max() if hasattr(a, 'max') else 'N/A'}")
+                if hasattr(a, 'isnan') and hasattr(a, 'any') and a.isnan().any():
+                     logger.warning(f"    WARNING: arg{i} contains NaNs!")
+                elif hasattr(np, 'isnan') and isinstance(a, np.ndarray) and np.isnan(a).any():
+                     logger.warning(f"    WARNING: arg{i} contains NaNs!")
+                     
+        for k, v in kwargs.items():
+            if hasattr(v, 'shape'):
+                logger.info(f"    kwarg {k}.shape: {v.shape}")
+                
+        # Run function
+        try:
+            result = func(*args, **kwargs)
+        except Exception as e:
+            logger.exception(f"CRASH in [ {func.__name__} ]: {e}")
+            raise
+            
+        t_end = time.time()
+        logger.info(f"<== Finished [ {func.__name__} ] in {t_end - t_start:.2f}s")
+        
+        # Log output features
+        if hasattr(result, 'shape'):
+            logger.info(f"    Output shape: {result.shape}")
+        elif isinstance(result, tuple):
+            logger.info(f"    Output tuple shapes: {[r.shape if hasattr(r, 'shape') else type(r) for r in result]}")
+            
+        return result
+    return wrapper
 
+logger.info(f"Logs are being saved to {log_file}")
+
+@log_and_validate
 def create_feature_extractor(config: PipelineConfig):
     """Create the appropriate feature extractor based on config."""
     if config.features.backend == "dinov3":
@@ -73,10 +124,27 @@ def create_feature_extractor(config: PipelineConfig):
         raise ValueError(f"Unknown backend: {config.features.backend}")
 
 
+@log_and_validate
 def voxel_to_feature_coords(points: np.ndarray, original_shape: tuple,
                              feature_shape: tuple, downsample: int) -> np.ndarray:
     """
     Convert voxel coordinates to feature grid coordinates.
+
+    WHY THIS IS CORRECT EVEN WHEN SLICES ARE RESIZED:
+    TriplanarFuser may resize slices (e.g. 140px → 448px) before patch
+    embedding. The output patch resolution is new_h // patch_size (e.g. 28).
+    fH is read from axial_pf.shape[2] — the ACTUAL output, not a formula.
+
+    So fH/dH = (new_h/patch_size) / dH = scale/patch_size, and:
+        feat_y = y_down * fH/dH = y_down * scale / patch_size   ← correct
+
+    The resize factor is implicitly absorbed into fH. No explicit scale
+    factor tracking is needed.
+
+    For coronal and sagittal planes: axes are rearranged in fuse_triplanar
+    so that each axis of the unified (fD, fH, fW) grid corresponds to
+    (D, H, W) of the original volume before trilinear resampling. The same
+    (fD/dD, fH/dH, fW/dW) ratios therefore apply uniformly to all planes.
 
     Args:
         points: (N, 3) in voxel coords (z, y, x)
@@ -96,7 +164,8 @@ def voxel_to_feature_coords(points: np.ndarray, original_shape: tuple,
     feat_points[:, 1] = feat_points[:, 1] / downsample
     feat_points[:, 2] = feat_points[:, 2] / downsample
 
-    # Then scale to feature grid
+    # Then scale to feature grid.
+    # fH/dH captures resize + patch pooling in one ratio (see docstring).
     dD = D // downsample
     dH = H // downsample
     dW = W // downsample
@@ -113,6 +182,8 @@ def voxel_to_feature_coords(points: np.ndarray, original_shape: tuple,
     return feat_points
 
 
+
+@log_and_validate
 def get_features(
     config: PipelineConfig,
     volume: np.ndarray,
@@ -149,6 +220,7 @@ def get_features(
     return result
 
 
+@log_and_validate
 def sample_and_describe(
     feats: np.ndarray,
     feat_shape: tuple,
@@ -159,21 +231,34 @@ def sample_and_describe(
     keypoints: np.ndarray = None,
     rng: np.random.RandomState = None,
     z_stratified: bool = True,
+    n_keypoint_anchors: int = 0,
 ) -> tuple:
     """
     Sample points inside mask and extract descriptors.
 
-    Optionally includes Förstner keypoints.
+    Args:
+        keypoints: Foerstner keypoints to optionally inject as anchors.
+        n_keypoint_anchors: max keypoints to add (0 = disabled).
+            ThoraxCBCT has ~30k keypoints per volume; injecting all of them
+            crashes OT/GWOT and biases NN. Cap at a small number (e.g. 500)
+            or keep disabled (default).
 
     Returns:
         (voxel_pts, descriptors_normalized)
     """
     voxel_pts = sample_points_in_mask(mask, n_points, z_stratified=z_stratified, rng=rng)
 
-    # Include Förstner keypoints if provided (as high-value anchors)
-    if keypoints is not None:
-        voxel_pts = include_keypoints(voxel_pts, keypoints, mask=mask)
-        logger.info(f"    Added keypoints → {len(voxel_pts)} total points")
+    # Inject a capped subsample of Foerstner keypoints as anchor points
+    if keypoints is not None and n_keypoint_anchors > 0:
+        if rng is None:
+            rng = np.random.RandomState(42)
+        if len(keypoints) > n_keypoint_anchors:
+            idx = rng.choice(len(keypoints), n_keypoint_anchors, replace=False)
+            keypoints_sub = keypoints[idx]
+        else:
+            keypoints_sub = keypoints
+        voxel_pts = include_keypoints(voxel_pts, keypoints_sub, mask=mask)
+        logger.info(f"    Added {len(keypoints_sub)} keypoint anchors → {len(voxel_pts)} total points")
 
     # Convert to feature grid coords
     feat_pts = voxel_to_feature_coords(voxel_pts, orig_shape, feat_shape, downsample)
@@ -188,6 +273,7 @@ def sample_and_describe(
     return voxel_pts, desc
 
 
+@log_and_validate
 def run_matching_stage(
     config: PipelineConfig,
     fixed_feats: np.ndarray,
@@ -217,12 +303,19 @@ def run_matching_stage(
     logger.info(f"  [{stage_name}] Sampling {n_points} points...")
     rng = np.random.RandomState(42)
 
+    # Keypoint injection: only if explicitly enabled and capped.
+    # Default is disabled (n_keypoint_anchors=0) because:
+    # 1) ThoraxCBCT has ~30k keypoints per volume — injecting all crashes OT/GWOT
+    # 2) Keypoints won't exist at test time — using them in matching is cheating
+    kp_cap = config.sampling.n_keypoint_anchors if config.sampling.include_keypoints else 0
+
     # Sample and describe fixed points
     fixed_voxel_pts, fixed_desc = sample_and_describe(
         fixed_feats, fixed_feat_shape, fixed_orig_shape,
         fixed_mask, n_points, downsample,
         keypoints=fixed_keypoints, rng=rng,
         z_stratified=config.sampling.z_stratified,
+        n_keypoint_anchors=kp_cap,
     )
 
     # Sample and describe moving points
@@ -232,6 +325,7 @@ def run_matching_stage(
         moving_mask, n_points, downsample,
         keypoints=moving_keypoints, rng=rng_m,
         z_stratified=config.sampling.z_stratified,
+        n_keypoint_anchors=kp_cap,
     )
 
     # If we have a current displacement, warp moving points to align
@@ -254,18 +348,21 @@ def run_matching_stage(
     match_kwargs = {}
     if config.matcher.method == "gwot":
         match_kwargs = {
-            "lambda_gw": config.gwot.lambda_gw,
+            "lambda_gw":    config.gwot.lambda_gw,
             "lambda_prior": config.gwot.lambda_prior,
-            "epsilon": config.gwot.epsilon,
+            "epsilon":      config.gwot.epsilon,
+            "lambda_mass":  config.gwot.lambda_mass,
             "local_radius": config.gwot.local_radius,
-            "max_iter": config.gwot.max_iter,
+            "max_iter":     config.gwot.max_iter,
         }
     elif config.matcher.method == "ot":
         match_kwargs = {
             "lambda_prior": config.gwot.lambda_prior,
-            "epsilon": config.gwot.epsilon,
-            "max_iter": config.gwot.max_iter,
+            "epsilon":      config.gwot.epsilon,
+            "lambda_mass":  config.gwot.lambda_mass,
+            "max_iter":     config.gwot.max_iter,
         }
+
 
     match_result = match(
         moving_desc, fixed_desc, warped_moving_pts, fixed_voxel_pts,
@@ -293,6 +390,7 @@ def run_matching_stage(
     return filtered
 
 
+@log_and_validate
 def run_pair(
     config: PipelineConfig,
     dataset: ThoraxCBCTDataset,
@@ -326,22 +424,15 @@ def run_pair(
         initial_tre = compute_tre(data["moving_keypoints"], data["fixed_keypoints"])
         logger.info(f"Initial TRE: {initial_tre['mean_tre']:.3f} mm")
 
-    # Use challenge-provided masks when available; fall back to thresholding.
-    # Challenge masks are carefully segmented body contours — no table/artifact leakage.
-    # Using the same mask object for both feature extraction and point sampling ensures
-    # there is NO mismatch between where descriptors are computed and where points are drawn.
-    def _get_mask(img: np.ndarray, dataset_mask: np.ndarray) -> np.ndarray:
-        if dataset_mask is not None:
-            logger.info("  Using challenge-provided trunk mask")
-            return dataset_mask
-        logger.info("  Generating trunk mask via thresholding (challenge mask not found)")
-        return generate_trunk_mask(img)
+    # ThoraxCBCT does not provide pre-segmented trunk masks — generate them
+    # via Hounsfield-unit thresholding + morphology.
+    fixed_mask  = generate_trunk_mask(fixed_img)
+    moving_mask = generate_trunk_mask(moving_img)
 
-    fixed_mask  = _get_mask(fixed_img,  data.get("fixed_mask"))
-    moving_mask = _get_mask(moving_img, data.get("moving_mask"))
 
     D, H, W = fixed_img.shape
     total_matches = -1
+    match_result = None
 
     viz = PipelineVisualizer(config.paths.output_dir, pair_idx, enabled=visualize)
     viz.input(fixed_img, moving_img, data["fixed_keypoints"], data["moving_keypoints"])
@@ -386,31 +477,21 @@ def run_pair(
         viz.features(fixed_feats.transpose(1, 2, 3, 0),
                      moving_feats.transpose(1, 2, 3, 0))
 
-        # Stage 2+3: Sampling + Matching
-        n_points = config.sampling.n_points_coarse
-        logger.info(f"Stage 2-3: Sampling {n_points} pts + {config.matcher.method} matching...")
-        match_result = run_matching_stage(
-            config, fixed_feats, moving_feats,
-            fixed_feat_shape, moving_feat_shape,
-            fixed_orig_shape, moving_orig_shape,
-            fixed_mask, moving_mask,
-            n_points, downsample,
-            fixed_keypoints=data["fixed_keypoints"],
-            moving_keypoints=data["moving_keypoints"],
-            stage_name="coarse",
-        )
+        # ============================================================
+        # Outer GWOT⇔SVF alternation loop
+        # ============================================================
+        # Each iteration:
+        #   1) Warp moving pts with current displacement (better correspondence search)
+        #   2) Sample + match in the (partially) warped space
+        #   3) Fit SVF on the new correspondences
+        # First iteration: displacement=None (no warping yet)
+        # Subsequent: warp moving pts before re-matching
+        # filter_matches always returns UNWARPED moving coords in matched_points_src
+        # so the fitter always produces the full fixed→moving displacement.
+        # ============================================================
+        n_outer = config.fitting.n_outer_iters
+        logger.info(f"Outer loop: {n_outer} iteration(s) of match+fit")
 
-        if match_result is None:
-            logger.error("Matching failed — too few correspondences")
-            return {"pair_idx": pair_idx, "error": "matching_failed",
-                    "runtime_seconds": time.time() - t0}
-
-        total_matches = match_result["n_matches"]
-
-        viz.matches(match_result, fixed_img, moving_img)
-
-        # Stage 4: Diffeomorphic fitting
-        logger.info(f"Stage 4: Diffeomorphic SVF fitting ({total_matches} matches)...")
         fitter = DiffeomorphicFitter(
             volume_shape=(D, H, W),
             grid_spacings=config.fitting.grid_spacings,
@@ -421,23 +502,68 @@ def run_pair(
             lr=config.fitting.lr,
             device=config.device,
         )
-        # Convention: field must be fixed→moving (same as MIND baseline).
-        # match() was called as match(moving, fixed) so:
-        #   matched_points_src = moving points (where matching started)
-        #   matched_points_tgt = fixed points  (where matching landed)
-        # We want SVF d such that d(fixed_pt) ≈ moving_pt, so
-        # src=fixed, tgt=moving when calling the fitter.
-        displacement = fitter.fit(
-            matched_src=match_result["matched_points_tgt"],  # fixed pts → field origin
-            matched_tgt=match_result["matched_points_src"],  # moving pts → field target
-            weights=match_result["weights"],
-        )
+
+        displacement = None
+        match_result  = None
+
+        for outer_iter in range(n_outer):
+            # Point-count schedule: coarse → medium → fine for NN.
+            # OT/GWOT always uses n_points_ot (O(N²) memory constraint).
+            if config.matcher.method in ("ot", "gwot"):
+                n_pts = config.sampling.n_points_ot
+            elif n_outer == 1 or outer_iter == 0:
+                n_pts = config.sampling.n_points_coarse
+            elif outer_iter < n_outer - 1:
+                n_pts = config.sampling.n_points_medium
+            else:
+                n_pts = config.sampling.n_points_fine
+
+            logger.info(f"\nOuter iter {outer_iter + 1}/{n_outer}: "
+                        f"{n_pts} pts, matcher={config.matcher.method}")
+
+            match_result = run_matching_stage(
+                config, fixed_feats, moving_feats,
+                fixed_feat_shape, moving_feat_shape,
+                fixed_orig_shape, moving_orig_shape,
+                fixed_mask, moving_mask,
+                n_pts, downsample,
+                displacement=displacement,   # warp moving pts for iter ≥1
+                fixed_keypoints=data["fixed_keypoints"],
+                moving_keypoints=data["moving_keypoints"],
+                stage_name=f"iter{outer_iter + 1}",
+            )
+
+            if match_result is None:
+                logger.warning(f"  Matching failed at outer iter {outer_iter + 1}")
+                if displacement is None:
+                    logger.error("  No displacement to fall back to — aborting")
+                    return {"pair_idx": pair_idx, "error": "matching_failed",
+                            "runtime_seconds": time.time() - t0}
+                logger.warning("  Keeping displacement from previous iteration")
+                break
+
+            # Fit SVF: field is fixed→moving.
+            # matched_points_tgt = fixed pts (field origin)
+            # matched_points_src = original (unwarped) moving pts (field target)
+            displacement = fitter.fit(
+                matched_src=match_result["matched_points_tgt"],
+                matched_tgt=match_result["matched_points_src"],
+                weights=match_result["weights"],
+            )
+            logger.info(f"  Iter {outer_iter + 1} displacement: "
+                        f"max={displacement.abs().max().item():.1f}, "
+                        f"mean={displacement.abs().mean().item():.1f}")
+
+        total_matches = match_result["n_matches"] if match_result else 0
     else:
         raise ValueError(f"Unknown method: {method}")
 
     logger.info(f"  Displacement: max={displacement.abs().max().item():.1f}, "
                 f"mean={displacement.abs().mean().item():.1f}")
+    if match_result is not None:
+        viz.matches(match_result, fixed_img, moving_img)
     viz.displacement(displacement, fixed_img)
+
 
     # =========================================================
     # DIAGNOSTICS: Use DINO-Reg evaluation convention
@@ -477,7 +603,7 @@ def run_pair(
     # =========================================================
     # Stage 5: Optional intensity refinement (local NCC)
     # =========================================================
-    if config.fitting.n_outer_iters > 0:
+    if config.fitting.intensity_refine:
         logger.info("\nStage 5: Intensity refinement (local NCC)...")
         try:
             from pipeline.transform.intensity_refine import intensity_refinement
@@ -576,7 +702,11 @@ def main():
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--downsample", type=int, default=2, help="Volume downsample factor")
     parser.add_argument("--no-intensity-refine", action="store_true",
-                        help="Skip intensity refinement")
+                        help="Explicitly disable intensity refinement (default: already off)")
+    parser.add_argument("--intensity-refine", action="store_true",
+                        help="Enable local-NCC intensity refinement after SVF fitting")
+    parser.add_argument("--n-outer-iters", type=int, default=None,
+                        help="GWOT⇔fit alternation iterations (default: 1 = single pass)")
     parser.add_argument("--visualize", action="store_true",
                         help="Save diagnostic PNG panels to output/viz/pair_XX/")
     args = parser.parse_args()
@@ -589,8 +719,13 @@ def main():
     if args.n_points is not None:
         config.sampling.n_points_coarse = args.n_points
     config.features.slice_batch_size = args.batch_size
-    if args.no_intensity_refine:
-        config.fitting.n_outer_iters = 0
+    # Intensity refinement: --intensity-refine enables, --no-intensity-refine disables
+    if getattr(args, "intensity_refine", False):
+        config.fitting.intensity_refine = True
+    if getattr(args, "no_intensity_refine", False):
+        config.fitting.intensity_refine = False
+    if getattr(args, "n_outer_iters", None) is not None:
+        config.fitting.n_outer_iters = args.n_outer_iters
 
     # Dataset
     dataset = ThoraxCBCTDataset(config.paths.data_root, split=args.split)

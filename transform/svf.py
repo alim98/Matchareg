@@ -76,10 +76,14 @@ class SVFField(nn.Module):
         v = self.velocity  # (1, 3, gD, gH, gW)
         reg = torch.tensor(0.0, device=v.device)
 
+        # The physical distance between grid points is self.grid_spacing.
+        # Second derivative approx uses f(x-h) - 2f(x) + f(x+h) / h^2.
+        h2 = self.grid_spacing ** 2
+
         for dim in range(3):
             # Second-order finite difference along each spatial dim
             # dim+2 because first two dims are batch and channel
-            d2 = torch.diff(v, n=2, dim=dim + 2)
+            d2 = torch.diff(v, n=2, dim=dim + 2) / h2
             reg = reg + (d2 ** 2).mean()
 
         return reg
