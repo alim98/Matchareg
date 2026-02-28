@@ -283,7 +283,9 @@ def mind_convex_adam(
         )
         logger.info(f"  After IC: max_disp={disp_hr.abs().max().item():.1f}")
     else:
-        disp_hr = disp_soft
+        disp_hr = F.interpolate(
+            disp_soft * grid_sp, size=(D, H, W), mode='trilinear', align_corners=False
+        )
     
     # Step 4: Adam instance optimization
     if lambda_weight > 0:
@@ -455,7 +457,7 @@ def convex_adam_on_features(
         logger.info(f"  After IC: max_disp={disp_hr.abs().max().item():.1f}")
     else:
         disp_hr = F.interpolate(
-            disp_soft, size=(D, H, W), mode='trilinear', align_corners=False
+            disp_soft * grid_sp, size=(D, H, W), mode='trilinear', align_corners=False
         )
     
     # Step 4: Adam instance optimization
@@ -528,10 +530,15 @@ def convex_adam_on_features(
     # DO NOT negate. Displacement convention follows DINO-Reg:
     # d(x_fixed) = x_moving - x_fixed
     # Evaluation: sample d at FIXED keypoints, warped_fixed = fixed + d, compare to moving.
+    # Channel meaning: ch0=first_spatial_dim, ch1=second, ch2=third of the input feature volume.
     
     elapsed = time.time() - t0
     logger.info(f"  Final: max_disp={disp_hr.abs().max().item():.1f} voxels, "
                 f"mean={disp_hr.abs().mean().item():.1f} voxels, time={elapsed:.1f}s")
+    for c in range(3):
+        logger.info(f"    ch{c}: mean={disp_hr[0,c].mean().item():+.2f}, "
+                    f"std={disp_hr[0,c].std().item():.2f}, "
+                    f"absmax={disp_hr[0,c].abs().max().item():.1f}")
     
     return disp_hr.float()
 

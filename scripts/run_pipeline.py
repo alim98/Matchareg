@@ -280,19 +280,16 @@ def run_pair(
     config: PipelineConfig,
     dataset: ThoraxCBCTDataset,
     pair_idx: int,
-    fuser: TriplanarFuser,
+    method: str = "mind",
+    fuser: "TriplanarFuser" = None,
     downsample: int = 2,
 ) -> dict:
     """
-    Run full multi-stage registration on a single pair.
+    Run registration on a single pair.
 
-    Implements:
-    1. Feature extraction
-    2. Multi-stage matching (coarse → medium → fine) per plan.md
-    3. GWOT↔fit alternation (re-match after each fit)
-    4. Diffeomorphic fitting with SVF
-    5. Optional intensity refinement (local NCC)
-    6. Evaluation
+    Methods:
+        'mind': MIND-SSC ConvexAdam baseline (full resolution, no feature extraction)
+        'sparse': Foundation features + sparse matching + SVF fitting (plan.md pipeline)
     """
     t0 = time.time()
 
@@ -311,82 +308,92 @@ def run_pair(
         initial_tre = compute_tre(data["moving_keypoints"], data["fixed_keypoints"])
         logger.info(f"Initial TRE: {initial_tre['mean_tre']:.3f} mm")
 
-    # =========================================================
-    # Stage 1: Feature extraction
-    # =========================================================
-    logger.info("Stage 1: Feature extraction...")
-    fixed_result = get_features(config, fixed_img, data["fixed_id"], fuser)
-    moving_result = get_features(config, moving_img, data["moving_id"], fuser)
-
-    fixed_feats, fixed_feat_shape, fixed_orig_shape = fixed_result
-    moving_feats, moving_feat_shape, moving_orig_shape = moving_result
-
     # Generate trunk masks
     fixed_mask = generate_trunk_mask(fixed_img)
     moving_mask = generate_trunk_mask(moving_img)
 
     D, H, W = fixed_img.shape
-    logger.info(f"\nStage 3: ConvexAdam on {config.features.backend} features...")
+    total_matches = -1
 
-    from pipeline.transform.mind_convex_adam import convex_adam_on_features
+    if method == "mind":
+        # =============================================================
+        # MIND-SSC ConvexAdam — proven baseline (matches original DINO-Reg)
+        # Pass images directly from get_fdata() — no transposition needed.
+        # Displacement channels = (dim0, dim1, dim2) of the volume.
+        # =============================================================
+        logger.info(f"\nMethod: MIND-SSC ConvexAdam")
+        from pipeline.transform.mind_convex_adam import mind_convex_adam
 
-    C = fixed_feats.shape[0]
-    if C > 64:
-        logger.info(f"  Reducing feature dimension from {C} to 64 with PCA...")
-        from sklearn.decomposition import PCA
-        flat_fixed = fixed_feats.reshape(C, -1).T
-        flat_moving = moving_feats.reshape(C, -1).T
-        
-        pca = PCA(n_components=64)
-        n_samples = min(10000, flat_fixed.shape[0])
-        indices = np.random.choice(flat_fixed.shape[0], n_samples, replace=False)
-        pca.fit(flat_fixed[indices])
-        
-        # FIX: The original was incorrectly packing the spatial dimensions
-        # Features come in as (C, fD, fH, fW). We flatten them to (N, C).
-        # PCA transforms them to (N, 64). We transpose them to (64, N).
-        # We MUST reshape them back to (64, fD, fH, fW) in the exact same spatial order.
-        fixed_feats = pca.transform(flat_fixed).T.reshape(64, fixed_feat_shape[0], fixed_feat_shape[1], fixed_feat_shape[2])
-        moving_feats = pca.transform(flat_moving).T.reshape(64, moving_feat_shape[0], moving_feat_shape[1], moving_feat_shape[2])
-        
-        # Add normalization after PCA
-        fixed_feats = fixed_feats / (np.linalg.norm(fixed_feats, axis=0, keepdims=True) + 1e-8)
-        moving_feats = moving_feats / (np.linalg.norm(moving_feats, axis=0, keepdims=True) + 1e-8)
-        
-    fixed_t = torch.from_numpy(fixed_feats).unsqueeze(0).float()
-    moving_t = torch.from_numpy(moving_feats).unsqueeze(0).float()
-    
-    logger.info(f"  Upsampling features to full volume size ({D}, {H}, {W})...")
-    # INTERPOLATION BUG & AXIS MISMATCH
-    # In DINO-Reg, the input volume spatial dim is (H, W, D).
-    # Our data volume shape is (D, H, W).
-    # Since DINO-Reg's `correlate` and `coupled_convex` process loops over `H` explicitly
-    # and assumes grid meshes are formed in a certain way, we must align our dims tightly.
-    # We pass it our (D, H, W), but DINO-Reg's ConvexAdam expects the first spatial
-    # dimension to be the biggest/axial. Actually, DINO-Reg just expects whatever shape and `map_coordinates` we use consistently.
-    # The evaluation output showed: `Axis 0 (z(D)) ... actual mean=+0.01` when ideal was 0.89.
-    # Displacement was vanishing. The root cause is `disp_lr.float().cpu().data / grid_sp_adam`
-    # and `grid_sp` mismatched Adam vs Convex scaling, but let's stick to the base ConvexAdam config.
+        displacement = mind_convex_adam(
+            fixed_img=fixed_img,
+            moving_img=moving_img,
+            mind_r=1,
+            mind_d=2,
+            lambda_weight=1.25,
+            grid_sp=6,
+            disp_hw=4,
+            n_iter_adam=800,  # original DINO-Reg ThoraxCBCT default
+            grid_sp_adam=2,
+            ic=True,
+            device=config.device,
+        )
 
-    fixed_feats_full = F.interpolate(fixed_t, size=(D, H, W), mode="trilinear", align_corners=False)
-    moving_feats_full = F.interpolate(moving_t, size=(D, H, W), mode="trilinear", align_corners=False)
+    elif method == "sparse":
+        # =============================================================
+        # Foundation features (DINOv3/MATCHA) + sparse matching + SVF
+        # =============================================================
+        assert fuser is not None, "Feature fuser required for sparse method"
+        logger.info(f"\nMethod: {config.features.backend} + {config.matcher.method} + SVF")
 
-    # Note: the `mind_convex_adam` module had issues with lambda_weight vs n_iter.
-    # We will pass lambda_weight=2.0 and n_iter_adam=30 to ensure we don't zero-out displacement.
-    displacement = convex_adam_on_features(
-        fixed_feats=fixed_feats_full,
-        moving_feats=moving_feats_full,
-        volume_shape=(D, H, W),
-        grid_sp=6,
-        disp_hw=4,
-        lambda_weight=2.0,
-        n_iter_adam=30,
-        grid_sp_adam=2,
-        ic=True,
-        device=config.device,
-    )
+        # Stage 1: Feature extraction
+        logger.info("Stage 1: Feature extraction...")
+        fixed_result = get_features(config, fixed_img, data["fixed_id"], fuser)
+        moving_result = get_features(config, moving_img, data["moving_id"], fuser)
+        fixed_feats, fixed_feat_shape, fixed_orig_shape = fixed_result
+        moving_feats, moving_feat_shape, moving_orig_shape = moving_result
 
-    total_matches = -1  # dense method, no explicit matches
+        # Stage 2+3: Sampling + Matching
+        n_points = config.sampling.n_points_coarse
+        logger.info(f"Stage 2-3: Sampling {n_points} pts + {config.matcher.method} matching...")
+        match_result = run_matching_stage(
+            config, fixed_feats, moving_feats,
+            fixed_feat_shape, moving_feat_shape,
+            fixed_orig_shape, moving_orig_shape,
+            fixed_mask, moving_mask,
+            n_points, downsample,
+            fixed_keypoints=data["fixed_keypoints"],
+            moving_keypoints=data["moving_keypoints"],
+            stage_name="coarse",
+        )
+
+        if match_result is None:
+            logger.error("Matching failed — too few correspondences")
+            return {"pair_idx": pair_idx, "error": "matching_failed",
+                    "runtime_seconds": time.time() - t0}
+
+        total_matches = match_result["n_matches"]
+
+        # Stage 4: Diffeomorphic fitting
+        logger.info(f"Stage 4: Diffeomorphic SVF fitting ({total_matches} matches)...")
+        fitter = DiffeomorphicFitter(
+            grid_spacings=config.fitting.grid_spacings,
+            n_iters_per_level=config.fitting.n_iters_per_level,
+            lambda_smooth=config.fitting.lambda_smooth,
+            lambda_jacobian=config.fitting.lambda_jacobian,
+            n_squaring_steps=config.fitting.n_squaring_steps,
+            lr=config.fitting.lr,
+        )
+        displacement = fitter.fit(
+            source_pts=torch.from_numpy(match_result["source_pts"]).float(),
+            target_pts=torch.from_numpy(match_result["target_pts"]).float(),
+            volume_shape=(D, H, W),
+            device=config.device,
+        )
+    else:
+        raise ValueError(f"Unknown method: {method}")
+
+    logger.info(f"  Displacement: max={displacement.abs().max().item():.1f}, "
+                f"mean={displacement.abs().mean().item():.1f}")
 
     # =========================================================
     # DIAGNOSTICS: Use DINO-Reg evaluation convention
@@ -416,11 +423,11 @@ def run_pair(
         
         # Per-axis analysis
         ideal_disp = mkp - fkp  # d should be: moving - fixed
-        for ax, name in enumerate(["z(D)", "y(H)", "x(W)"]):
+        for ax in range(3):
             ideal = ideal_disp[:, ax]
             actual = fixed_disp[:, ax]
             corr = np.corrcoef(ideal, actual)[0, 1] if ideal.std() > 0 else 0
-            logger.info(f"  Axis {ax} ({name}): ideal mean={ideal.mean():+.2f} std={ideal.std():.2f}, "
+            logger.info(f"  Axis {ax}: ideal mean={ideal.mean():+.2f} std={ideal.std():.2f}, "
                         f"actual mean={actual.mean():+.2f} std={actual.std():.2f}, corr={corr:+.3f}")
 
     # =========================================================
@@ -510,6 +517,10 @@ def main():
     parser = argparse.ArgumentParser(description="Run registration pipeline")
     parser.add_argument("--pair", type=int, default=None, help="Single pair index")
     parser.add_argument("--split", type=str, default="val", choices=["train", "val"])
+    parser.add_argument("--method", type=str, default="mind",
+                        choices=["mind", "sparse"],
+                        help="'mind': MIND-SSC ConvexAdam baseline. "
+                             "'sparse': foundation features + matching + SVF fitting.")
     parser.add_argument("--feature", type=str, default="dinov3", choices=["dinov3", "matcha"])
     parser.add_argument("--matcher", type=str, default="gwot", choices=["nn", "ot", "gwot"])
     parser.add_argument("--device", type=str, default="cuda")
@@ -536,23 +547,25 @@ def main():
     dataset = ThoraxCBCTDataset(config.paths.data_root, split=args.split)
     logger.info(f"Dataset: {dataset}")
 
-    # Feature extractor + fuser
-    extractor = create_feature_extractor(config)
-    fuser = TriplanarFuser(
-        extractor,
-        batch_size=config.features.slice_batch_size,
-        fusion=config.features.fusion_method,
-        downsample=args.downsample,
-        device=config.device,
-    )
+    # Feature extractor + fuser (only needed for sparse method)
+    fuser = None
+    if args.method == "sparse":
+        extractor = create_feature_extractor(config)
+        fuser = TriplanarFuser(
+            extractor,
+            batch_size=config.features.slice_batch_size,
+            fusion=config.features.fusion_method,
+            downsample=args.downsample,
+            device=config.device,
+        )
 
     # Run
     if args.pair is not None:
-        results = [run_pair(config, dataset, args.pair, fuser, args.downsample)]
+        results = [run_pair(config, dataset, args.pair, args.method, fuser, args.downsample)]
     else:
         results = []
         for i in range(len(dataset)):
-            r = run_pair(config, dataset, i, fuser, args.downsample)
+            r = run_pair(config, dataset, i, args.method, fuser, args.downsample)
             results.append(r)
 
     # Summary
