@@ -49,9 +49,14 @@ from pipeline.transform.warp import warp_points
 from pipeline.eval.metrics import compute_tre, compute_jacobian_stats, print_results
 from pipeline.viz.visualizer import PipelineVisualizer
 
-import functools
+from datetime import datetime
 
-log_file = PROJECT_ROOT / "pipeline_run.log"
+# Setup timestamped detailed run folder
+run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+log_dir = PROJECT_ROOT / "detailed_logs" / run_timestamp
+log_dir.mkdir(parents=True, exist_ok=True)
+log_file = log_dir / "pipeline_run.log"
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s: %(message)s",
@@ -102,6 +107,8 @@ def log_and_validate(func):
     return wrapper
 
 logger.info(f"Logs are being saved to {log_file}")
+logger.info(f"Detailed visualizations and data will be saved to {log_dir}")
+
 
 @log_and_validate
 def create_feature_extractor(config: PipelineConfig):
@@ -284,8 +291,11 @@ def run_matching_stage(
     moving_orig_shape: tuple,
     fixed_mask: np.ndarray,
     moving_mask: np.ndarray,
+    fixed_img: np.ndarray,
+    moving_img: np.ndarray,
     n_points: int,
     downsample: int,
+    viz: "PipelineVisualizer" = None,
     displacement: torch.Tensor = None,
     fixed_keypoints: np.ndarray = None,
     moving_keypoints: np.ndarray = None,
@@ -336,6 +346,9 @@ def run_matching_stage(
     else:
         warped_moving_pts = moving_voxel_pts
 
+    if viz is not None:
+        viz.sampled_points(fixed_img, moving_img, fixed_voxel_pts, warped_moving_pts, stage_name)
+
     # Diagnostic: cosine similarity
     n_sample = min(500, len(fixed_desc))
     cos_sample = fixed_desc[:n_sample] @ moving_desc[:n_sample].T
@@ -373,6 +386,13 @@ def run_matching_stage(
     # displacement filter measures the RESIDUAL after warping (not the
     # original full displacement). The returned matched_points_src always
     # contains original (unwarped) moving coords — correct for the SVF fitter.
+    
+    if "matched_points_src" in match_result:
+        raw_src = match_result["matched_points_src"]
+        raw_tgt = match_result["matched_points_tgt"]
+        raw_dist = np.linalg.norm(raw_src - raw_tgt, axis=1)
+        logger.info(f"  [{stage_name}] Match distances (raw): min={raw_dist.min():.2f}, max={raw_dist.max():.2f}, mean={raw_dist.mean():.2f}, std={raw_dist.std():.2f}")
+
     filtered = filter_matches(
         match_result, moving_voxel_pts, fixed_voxel_pts,
         confidence_threshold=config.gwot.confidence_threshold,
@@ -381,8 +401,14 @@ def run_matching_stage(
         max_displacement=150.0,  # reject physically implausible matches
         points_src_geom=warped_moving_pts,  # geometry used during matching
     )
+    
     logger.info(f"  [{stage_name}] Matches: {filtered['n_matches']} / {filtered['n_before_filter']}")
-
+    if filtered['n_matches'] > 0:
+        filt_src = filtered["matched_points_src"]
+        filt_tgt = filtered["matched_points_tgt"]
+        filt_dist = np.linalg.norm(filt_src - filt_tgt, axis=1)
+        logger.info(f"  [{stage_name}] Match distances (filtered): min={filt_dist.min():.2f}, max={filt_dist.max():.2f}, mean={filt_dist.mean():.2f}, std={filt_dist.std():.2f}")
+    
     if filtered["n_matches"] < 10:
         logger.warning(f"  [{stage_name}] Too few matches ({filtered['n_matches']})")
         return None
@@ -429,13 +455,18 @@ def run_pair(
     fixed_mask  = generate_trunk_mask(fixed_img)
     moving_mask = generate_trunk_mask(moving_img)
 
+    logger.info(f"Dataset stats [Fixed]:  shape={fixed_img.shape}, min={fixed_img.min():.1f}, max={fixed_img.max():.1f}, mean={fixed_img.mean():.1f}, std={fixed_img.std():.1f}")
+    logger.info(f"Dataset stats [Moving]: shape={moving_img.shape}, min={moving_img.min():.1f}, max={moving_img.max():.1f}, mean={moving_img.mean():.1f}, std={moving_img.std():.1f}")
+    logger.info(f"Mask stats [Fixed]: sum={fixed_mask.sum()}, approx volume={fixed_mask.sum()/(D*H*W)*100:.1f}%")
+    logger.info(f"Mask stats [Moving]: sum={moving_mask.sum()}, approx volume={moving_mask.sum()/(D*H*W)*100:.1f}%")
 
-    D, H, W = fixed_img.shape
-    total_matches = -1
-    match_result = None
+    fixed_norm = robust_intensity_normalize(fixed_img, mask=fixed_mask)
+    moving_norm = robust_intensity_normalize(moving_img, mask=moving_mask)
 
-    viz = PipelineVisualizer(config.paths.output_dir, pair_idx, enabled=visualize)
+    viz = PipelineVisualizer(log_dir, pair_idx, enabled=True)
     viz.input(fixed_img, moving_img, data["fixed_keypoints"], data["moving_keypoints"])
+    viz.preprocessing(fixed_img, moving_img, fixed_mask, moving_mask, fixed_norm=fixed_norm, moving_norm=moving_norm)
+
 
     if method == "mind":
         # =============================================================
@@ -473,6 +504,9 @@ def run_pair(
         moving_result = get_features(config, moving_img, data["moving_id"], fuser, mask=moving_mask)
         fixed_feats, fixed_feat_shape, fixed_orig_shape = fixed_result
         moving_feats, moving_feat_shape, moving_orig_shape = moving_result
+
+        logger.info(f"Feature Map stats [Fixed]:  min={fixed_feats.min():.3f}, max={fixed_feats.max():.3f}, mean={fixed_feats.mean():.3f}, std={fixed_feats.std():.3f}")
+        logger.info(f"Feature Map stats [Moving]: min={moving_feats.min():.3f}, max={moving_feats.max():.3f}, mean={moving_feats.mean():.3f}, std={moving_feats.std():.3f}")
 
         viz.features(fixed_feats.transpose(1, 2, 3, 0),
                      moving_feats.transpose(1, 2, 3, 0))
@@ -526,7 +560,9 @@ def run_pair(
                 fixed_feat_shape, moving_feat_shape,
                 fixed_orig_shape, moving_orig_shape,
                 fixed_mask, moving_mask,
+                fixed_img, moving_img,
                 n_pts, downsample,
+                viz=viz,
                 displacement=displacement,   # warp moving pts for iter ≥1
                 fixed_keypoints=data["fixed_keypoints"],
                 moving_keypoints=data["moving_keypoints"],
@@ -726,6 +762,18 @@ def main():
         config.fitting.intensity_refine = False
     if getattr(args, "n_outer_iters", None) is not None:
         config.fitting.n_outer_iters = args.n_outer_iters
+
+    import dataclasses
+    def _dump_config(obj):
+        if dataclasses.is_dataclass(obj):
+            return dataclasses.asdict(obj)
+        elif hasattr(obj, "__dict__"):
+            return vars(obj)
+        return str(obj)
+
+    import json
+    logger.info("=== PIPELINE CONFIG ===")
+    logger.info(json.dumps(_dump_config(config), indent=2, default=str))
 
     # Dataset
     dataset = ThoraxCBCTDataset(config.paths.data_root, split=args.split)

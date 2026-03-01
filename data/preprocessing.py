@@ -6,6 +6,9 @@ and slice-to-pseudo-RGB conversion for foundation model input.
 """
 import numpy as np
 from typing import Tuple, Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 try:
     from scipy import ndimage
@@ -55,30 +58,41 @@ def robust_intensity_normalize(
 
 def generate_trunk_mask(
     volume: np.ndarray,
-    threshold: float = -500.0,
+    method: str = "percentile",
+    percentile: float = 30.0,
     min_component_size: int = 10000,
 ) -> np.ndarray:
     """
-    Generate a simple trunk/body mask via thresholding + morphology.
-
-    Uses a fixed HU intensity threshold (e.g., -500) to separate body from 
-    background air, followed by binary closing and largest-component selection.
-
-    Args:
-        volume: 3D array (D, H, W) in physical intensities (e.g. HU)
-        threshold: fixed intensity threshold (values above this are body)
-        min_component_size: minimum connected component size to keep
-
-    Returns:
-        Binary mask (uint8), same shape as volume.
+    Generate a simple trunk/body mask via data-driven thresholding + morphology.
+    Percentile robustly drops background padding/air without brittle fixed HUs.
     """
-    mask = (volume > threshold).astype(np.uint8)
+    # 1. Detect and exclude out-of-FOV padding (common in CBCT)
+    corners = [
+        volume[0, 0, 0], volume[0, 0, -1], volume[0, -1, 0], volume[0, -1, -1],
+        volume[-1, 0, 0], volume[-1, 0, -1], volume[-1, -1, 0], volume[-1, -1, -1]
+    ]
+    pad_val = max(set(corners), key=corners.count)
+    fov_mask = (volume != pad_val)
+    
+    valid_voxels = volume[fov_mask]
+    if len(valid_voxels) == 0:
+        valid_voxels = volume.ravel() # Fallback
 
-    # Binary closing to fill small holes
+    # 2. Thresholding (only on valid FOV)
+    if method == "otsu":
+        from skimage.filters import threshold_otsu
+        thresh = threshold_otsu(valid_voxels)
+    else:
+        thresh = np.percentile(valid_voxels, percentile)
+
+    mask = ((volume > thresh) & fov_mask).astype(np.uint8)
+
+    # Fill holes and close minor gaps (using 3D fill since background padding is eliminated)
     struct = ndimage.generate_binary_structure(3, 2)
-    mask = ndimage.binary_closing(mask, structure=struct, iterations=3).astype(np.uint8)
+    mask = ndimage.binary_closing(mask, structure=struct, iterations=2).astype(np.uint8)
+    mask = ndimage.binary_fill_holes(mask).astype(np.uint8)
 
-    # Keep largest connected component
+    # Keep largest connected component (the body)
     labeled, n_labels = ndimage.label(mask)
     if n_labels > 1:
         component_sizes = np.bincount(labeled.ravel())
@@ -86,10 +100,11 @@ def generate_trunk_mask(
         largest = np.argmax(component_sizes)
         mask = (labeled == largest).astype(np.uint8)
 
-    # Final fill: slice-by-slice (axial) instead of 3D, to avoid filling the 
-    # entire background if the FOV boundary creates a closed 3D shell.
-    for z in range(mask.shape[0]):
-        mask[z] = ndimage.binary_fill_holes(mask[z]).astype(np.uint8)
+    coverage = mask.mean()
+    logger.info(f"Trunk mask computed: method='{method}', thresh={thresh:.1f}, coverage={coverage:.3f} (target: ~0.3-0.5)")
+    if coverage > 0.8:
+        logger.warning(f"Trunk mask coverage is extremely high ({coverage:.3f}). Background may be leaking!")
+
     return mask
 
 

@@ -92,7 +92,7 @@ class TestPreprocessing:
         vol = np.zeros((32, 32, 32), dtype=np.float32)
         vol[8:24, 8:24, 8:24] = 100.0  # body in center
         vol += np.random.randn(32, 32, 32).astype(np.float32) * 5
-        mask = generate_trunk_mask(vol, threshold=50.0)
+        mask = generate_trunk_mask(vol, method="percentile", percentile=80.0)
         assert mask.dtype == np.uint8
         assert mask.sum() > 0
         # Center should be in mask

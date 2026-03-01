@@ -154,7 +154,7 @@ class DiffeomorphicFitter:
             residuals = torch.norm(warped - tgt_pts, dim=1)  # per-point distance
             # Huber loss: prevents extreme outliers from ripping the vector field
             # Delta tuned to target mean correspondence error
-            delta = 2.0  # voxels — transition point
+            delta = 50.0  # voxels — transition point (increased to allow physical momentum for 20-30 voxel gaps)
             huber = torch.where(
                 residuals < delta,
                 0.5 * residuals ** 2,
