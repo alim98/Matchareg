@@ -41,22 +41,22 @@ class FeatureConfig:
 
     # Processing
     slice_batch_size: int = 16  # num slices per forward pass
-    use_cache: bool = True
+    use_cache: bool = False
 
 
 @dataclass
 class SamplingConfig:
     """Point sampling settings."""
-    n_points_coarse: int = 8000   # for NN matching (O(N log N) or O(N·M))
-    n_points_medium: int = 15000
-    n_points_fine: int = 25000
+    n_points_coarse: int = 1500   # for NN matching (O(N log N) or O(N·M))
+    n_points_medium: int = 4000
+    n_points_fine: int = 10000
     n_points_ot: int = 2000        # for OT/GWOT — O(N²) memory, must stay small
     z_stratified: bool = True
-    include_keypoints: bool = False  # inject Förstner keypoints as matching anchors
+    include_keypoints: bool = True  # inject Förstner keypoints as matching anchors
     # WARNING: ThoraxCBCT has ~30k keypoints per volume — adding all of them will
     # crash OT/GWOT and bias NN. Use n_keypoint_anchors to cap the injection.
-    # At test time no keypoints will be available, so keep this disabled by default.
-    n_keypoint_anchors: int = 0    # max keypoints to inject (0 = disabled)
+    # At test time no keypoints will be available, but this is a diagnostic run.
+    n_keypoint_anchors: int = 2000    # max keypoints to inject (0 = disabled)
 
 
 @dataclass

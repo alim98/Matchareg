@@ -17,6 +17,7 @@ def filter_matches(
     mask_tgt: Optional[np.ndarray] = None,
     max_displacement: Optional[float] = None,
     points_src_geom: Optional[np.ndarray] = None,
+    points_tgt_geom: Optional[np.ndarray] = None,
 ) -> Dict:
     """
     Filter matches by confidence, mask validity, and displacement.
@@ -41,22 +42,23 @@ def filter_matches(
     tgt_idx = match_result["matches_tgt_idx"]
     weights = match_result["weights"]
 
-    # Source pts used for spatial/mask filtering (may differ from returned coords)
+    # Source and Target pts used for spatial displacement filtering (may differ from returned coords)
     pts_src_for_filter = points_src_geom if points_src_geom is not None else points_src
+    pts_tgt_for_filter = points_tgt_geom if points_tgt_geom is not None else points_tgt
 
     # Confidence filter
     valid = weights >= confidence_threshold
 
-    # Displacement filter — uses geom coords (warped), not the original output coords
+    # Displacement filter — uses geom coords for both if provided
     if max_displacement is not None:
         matched_src_geom = pts_src_for_filter[src_idx]
-        matched_tgt = points_tgt[tgt_idx]
-        displacements = np.linalg.norm(matched_src_geom - matched_tgt, axis=1)
+        matched_tgt_geom = pts_tgt_for_filter[tgt_idx]
+        displacements = np.linalg.norm(matched_src_geom - matched_tgt_geom, axis=1)
         valid &= displacements < max_displacement
 
     # Mask filter — checked in the respective image's own coordinate space
     if mask_src is not None:
-        pts = np.round(pts_src_for_filter[src_idx]).astype(int)
+        pts = np.round(points_src[src_idx]).astype(int)  # always use unwarped coords for moving mask
         for i in range(len(pts)):
             z, y, x = pts[i]
             if (z < 0 or z >= mask_src.shape[0] or

@@ -38,7 +38,7 @@ class TriplanarFuser:
         self,
         extractor,
         batch_size: int = 4,
-        fusion: Literal["concat_norm", "concat_pca"] = "concat_norm",
+        fusion: Literal["concat_norm", "concat_pca"] = "concat_pca",
         pca_dim: int = 256,
         downsample: int = 2,
         device: str = "cpu",
@@ -116,7 +116,7 @@ class TriplanarFuser:
             if need_resize:
                 batch = F.interpolate(
                     batch, size=(new_h, new_w),
-                    mode='bilinear', align_corners=False,
+                    mode='bilinear', align_corners=True,
                 )
 
             feats = self.extractor.extract_features(batch)
@@ -207,7 +207,7 @@ class TriplanarFuser:
         # pH_a should ≈ fH, pW_a should ≈ fW (both come from same slice dims)
         feat_vol = axial_pf.transpose(1, 0, 2, 3)  # (feat_dim, dD, pH_a, pW_a)
         feat_t = torch.from_numpy(feat_vol).unsqueeze(0)  # (1, feat_dim, dD, pH_a, pW_a)
-        feat_t = F.interpolate(feat_t, size=(fD, fH, fW), mode="trilinear", align_corners=False)
+        feat_t = F.interpolate(feat_t, size=(fD, fH, fW), mode="trilinear", align_corners=True)
         feat_volumes.append(feat_t[0].numpy())
         logger.info(f"  axial → {feat_volumes[-1].shape}")
 
@@ -218,7 +218,7 @@ class TriplanarFuser:
         # Rearrange: (feat_dim, y=dH, z=pH_c, x=pW_c) → (feat_dim, z=pH_c, y=dH, x=pW_c)
         feat_vol = feat_vol.transpose(0, 2, 1, 3)
         feat_t = torch.from_numpy(feat_vol).unsqueeze(0)  # (1, feat_dim, pH_c, dH, pW_c)
-        feat_t = F.interpolate(feat_t, size=(fD, fH, fW), mode="trilinear", align_corners=False)
+        feat_t = F.interpolate(feat_t, size=(fD, fH, fW), mode="trilinear", align_corners=True)
         feat_volumes.append(feat_t[0].numpy())
         logger.info(f"  coronal → {feat_volumes[-1].shape}")
 
@@ -229,7 +229,7 @@ class TriplanarFuser:
         # Rearrange: (feat_dim, x=dW, z=pH_s, y=pW_s) → (feat_dim, z=pH_s, y=pW_s, x=dW)
         feat_vol = feat_vol.transpose(0, 2, 3, 1)
         feat_t = torch.from_numpy(feat_vol).unsqueeze(0)  # (1, feat_dim, pH_s, pW_s, dW)
-        feat_t = F.interpolate(feat_t, size=(fD, fH, fW), mode="trilinear", align_corners=False)
+        feat_t = F.interpolate(feat_t, size=(fD, fH, fW), mode="trilinear", align_corners=True)
         feat_volumes.append(feat_t[0].numpy())
         logger.info(f"  sagittal → {feat_volumes[-1].shape}")
 
@@ -238,6 +238,10 @@ class TriplanarFuser:
         logger.info(f"Concatenated: {fused.shape}")
 
         if self.fusion == "concat_norm":
+            # Crucial: Mean-center the features to improve discriminability (cosine similarity).
+            # DINOv3 features inherently occupy a narrow cone in the high-dimensional space.
+            mean_feat = fused.mean(axis=(1, 2, 3), keepdims=True)
+            fused = fused - mean_feat
             norms = np.linalg.norm(fused, axis=0, keepdims=True) + 1e-8
             fused = fused / norms
         elif self.fusion == "concat_pca":
@@ -274,13 +278,23 @@ def save_features(features, path: Path):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     if isinstance(features, tuple):
-        fused, feat_shape, orig_shape = features
-        np.savez_compressed(
-            str(path),
-            features=fused,
-            feat_shape=np.array(feat_shape),
-            orig_shape=np.array(orig_shape),
-        )
+        if len(features) == 4:
+            fused, feat_shape, orig_shape, box_offset = features
+            np.savez_compressed(
+                str(path),
+                features=fused,
+                feat_shape=np.array(feat_shape),
+                orig_shape=np.array(orig_shape),
+                box_offset=np.array(box_offset),
+            )
+        else:
+            fused, feat_shape, orig_shape = features
+            np.savez_compressed(
+                str(path),
+                features=fused,
+                feat_shape=np.array(feat_shape),
+                orig_shape=np.array(orig_shape),
+            )
     else:
         np.savez_compressed(str(path), features=features)
     logger.info(f"Saved features to {path}")
@@ -290,9 +304,17 @@ def load_features(path: Path):
     """Load feature data from disk."""
     data = np.load(str(path))
     if "feat_shape" in data:
-        return (
-            data["features"],
-            tuple(data["feat_shape"]),
-            tuple(data["orig_shape"]),
-        )
+        if "box_offset" in data:
+            return (
+                data["features"],
+                tuple(data["feat_shape"]),
+                tuple(data["orig_shape"]),
+                data["box_offset"],
+            )
+        else:
+            return (
+                data["features"],
+                tuple(data["feat_shape"]),
+                tuple(data["orig_shape"]),
+            )
     return data["features"]

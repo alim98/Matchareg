@@ -101,9 +101,11 @@ class DiffeomorphicFitter:
                 current_src, tgt_pts, w, spacing
             )
 
-            # Compose with previous displacement
+            # Compose with previous displacement: disp_prev + residual(x + disp_prev(x))
+            # compose_displacements(disp1, disp2) -> d2(x) + d1(x + d2(x))
+            # So disp1=residual_disp, disp2=displacement
             if displacement is not None:
-                displacement = self._compose(displacement, residual_disp)
+                displacement = self._compose(residual_disp, displacement)
             else:
                 displacement = residual_disp
 
@@ -153,8 +155,8 @@ class DiffeomorphicFitter:
             warped = self._warp_points_differentiable(src_pts, disp)
             residuals = torch.norm(warped - tgt_pts, dim=1)  # per-point distance
             # Huber loss: prevents extreme outliers from ripping the vector field
-            # Delta tuned to target mean correspondence error
-            delta = 50.0  # voxels — transition point (increased to allow physical momentum for 20-30 voxel gaps)
+            # Delta dynamically tuned based on grid spacing
+            delta = max(10.0, grid_spacing * 2)
             huber = torch.where(
                 residuals < delta,
                 0.5 * residuals ** 2,

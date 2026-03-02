@@ -112,30 +112,34 @@ def nn_matching(
     desc_tgt: np.ndarray,
     points_src: np.ndarray,
     points_tgt: np.ndarray,
-    sim_threshold: float = 0.3,
-    max_displacement: float = 150.0,
+    sim_threshold: float = 0.65,
+    max_displacement: float = 50.0,
 ) -> Dict:
     """
-    Nearest-neighbor matching with mutual consistency and similarity threshold.
-
-    For each source point, find the closest target by cosine similarity.
-    Uses mutual consistency (forward+backward) + minimum similarity threshold.
-
-    Args:
-        sim_threshold: minimum cosine similarity to keep
-        max_displacement: maximum spatial distance in voxels
-
-    Returns dict with:
-        matches_src_idx: (K,) indices into source
-        matches_tgt_idx: (K,) indices into target
-        weights: (K,) confidence weights (cosine similarity)
+    Nearest-neighbor matching with localized search and strict gating.
     """
     cos_sim = desc_src @ desc_tgt.T  # (N, M)
     N, M = cos_sim.shape
 
-    # Forward matches: src → tgt
+    # Pre-filter: only allow match if spatial distance < max_displacement
+    # This prevents looking at distant points that have similar features
+    if max_displacement is not None and max_displacement > 0:
+        disp_matrix = cdist(points_src, points_tgt, metric="euclidean")
+        invalid_mask = disp_matrix >= max_displacement
+        cos_sim[invalid_mask] = -2.0  # essentially ignore these
+    
+    # Forward matches: src → tgt. We need top 2 for ratio test.
+    sorted_sim = np.sort(cos_sim, axis=1) # ascending
+    top1_sim = sorted_sim[:, -1]
+    top2_sim = sorted_sim[:, -2]
+    
     fwd_idx = np.argmax(cos_sim, axis=1)  # (N,)
-    fwd_sim = cos_sim[np.arange(N), fwd_idx]
+    fwd_sim = top1_sim
+    
+    # Ratio test (stricter!)
+    dist1 = np.clip(1.0 - top1_sim, 1e-8, 2.0)
+    dist2 = np.clip(1.0 - top2_sim, 1e-8, 2.0)
+    ratio_ok = (dist1 / dist2) < 0.85  # 0.85 ratio threshold
 
     # Backward matches: tgt → src
     bwd_idx = np.argmax(cos_sim, axis=0)  # (M,)
@@ -144,25 +148,16 @@ def nn_matching(
     src_indices = np.arange(N)
     mutual = bwd_idx[fwd_idx] == src_indices
 
-    # Similarity threshold
+    # Similarity threshold (very strict if prefilter doesn't help)
     sim_ok = fwd_sim >= sim_threshold
 
-    # Spatial displacement limit
-    if max_displacement is not None and max_displacement > 0:
-        disp = np.linalg.norm(
-            points_src[src_indices] - points_tgt[fwd_idx], axis=1
-        )
-        spatial_ok = disp < max_displacement
-    else:
-        spatial_ok = np.ones(N, dtype=bool)
-
-    # Combine: mutual + sim threshold + spatial
-    valid = mutual & sim_ok & spatial_ok
+    # Combine: HARD mutual AND ratio_ok + sim threshold
+    # Since we use spatial prefiltering, any match is already local.
+    valid = mutual & ratio_ok & sim_ok
 
     logger.info(f"  NN matching: {valid.sum()}/{N} matches "
-                f"(mutual: {mutual.sum()}, "
-                f"sim>{sim_threshold}: {sim_ok.sum()}, "
-                f"spatial<{max_displacement}: {spatial_ok.sum()})")
+                f"(mutual: {mutual.sum()}, ratio_ok: {ratio_ok.sum()}, "
+                f"sim>{sim_threshold}: {sim_ok.sum()})")
 
     return {
         "matches_src_idx": src_indices[valid],
@@ -367,13 +362,12 @@ def _extract_matches_from_transport(
     # Backward: each target's best source
     bwd_idx = np.argmax(P, axis=0)  # (M,)
 
-    # Mutual consistency
-    src_indices = np.arange(N)
-    mutual = bwd_idx[fwd_idx] == src_indices
-
-    matches_src = src_indices[mutual]
-    matches_tgt = fwd_idx[mutual]
-    weights = fwd_confidence[mutual]   # normalized ∈ (0, 1]
+    # We skip mutual consistency for GWOT because the OT transport plan is 
+    # already a globally coordinated assignment. Hard mutual thresholding 
+    # on a diffuse transport matrix drops too many valid assignments.
+    matches_src = np.arange(N)
+    matches_tgt = fwd_idx
+    weights = fwd_confidence
 
     if top_k is not None and len(matches_src) > top_k:
         top_indices = np.argsort(-weights)[:top_k]

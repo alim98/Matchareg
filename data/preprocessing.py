@@ -58,52 +58,55 @@ def robust_intensity_normalize(
 
 def generate_trunk_mask(
     volume: np.ndarray,
-    method: str = "percentile",
+    method: str = "ct_air",
     percentile: float = 30.0,
     min_component_size: int = 10000,
 ) -> np.ndarray:
     """
-    Generate a simple trunk/body mask via data-driven thresholding + morphology.
-    Percentile robustly drops background padding/air without brittle fixed HUs.
+    Generate a simple trunk/body mask via CT border-air detection.
     """
-    # 1. Detect and exclude out-of-FOV padding (common in CBCT)
-    corners = [
-        volume[0, 0, 0], volume[0, 0, -1], volume[0, -1, 0], volume[0, -1, -1],
-        volume[-1, 0, 0], volume[-1, 0, -1], volume[-1, -1, 0], volume[-1, -1, -1]
-    ]
-    pad_val = max(set(corners), key=corners.count)
-    fov_mask = (volume != pad_val)
+    D, H, W = volume.shape
     
-    valid_voxels = volume[fov_mask]
-    if len(valid_voxels) == 0:
-        valid_voxels = volume.ravel() # Fallback
+    # 1. Threshold air explicitly (CT values < -850 HU)
+    # Thorax CBCT air is usually ~ -1000
+    air_mask = volume < -850
+    
+    # 2. Identify the outside air (connected component touching the border)
+    markers = np.zeros_like(volume, dtype=int)
+    markers[0, :, :] = 1
+    markers[-1, :, :] = 1
+    markers[:, 0, :] = 1
+    markers[:, -1, :] = 1
+    markers[:, :, 0] = 1
+    markers[:, :, -1] = 1
+    markers = markers & air_mask
+    
+    labeled_air, num_features = ndimage.label(air_mask)
+    outside_air_mask = np.zeros_like(air_mask, dtype=bool)
+    if num_features > 0:
+        border_labels = np.unique(labeled_air[markers == 1])
+        border_labels = border_labels[border_labels > 0]
+        outside_air_mask = np.isin(labeled_air, border_labels)
 
-    # 2. Thresholding (only on valid FOV)
-    if method == "otsu":
-        from skimage.filters import threshold_otsu
-        thresh = threshold_otsu(valid_voxels)
-    else:
-        thresh = np.percentile(valid_voxels, percentile)
-
-    mask = ((volume > thresh) & fov_mask).astype(np.uint8)
-
-    # Fill holes and close minor gaps (using 3D fill since background padding is eliminated)
-    struct = ndimage.generate_binary_structure(3, 2)
-    mask = ndimage.binary_closing(mask, structure=struct, iterations=2).astype(np.uint8)
-    mask = ndimage.binary_fill_holes(mask).astype(np.uint8)
-
-    # Keep largest connected component (the body)
-    labeled, n_labels = ndimage.label(mask)
+    # 3. Body is everything that is NOT outside air
+    body_mask = ~outside_air_mask
+    
+    # 4. Fill holes slice by slice (lungs)
+    for z in range(D):
+        body_mask[z] = ndimage.binary_fill_holes(body_mask[z])
+    
+    # 5. Keep largest connected component
+    labeled, n_labels = ndimage.label(body_mask)
     if n_labels > 1:
         component_sizes = np.bincount(labeled.ravel())
         component_sizes[0] = 0  # ignore background
         largest = np.argmax(component_sizes)
         mask = (labeled == largest).astype(np.uint8)
+    else:
+        mask = body_mask.astype(np.uint8)
 
     coverage = mask.mean()
-    logger.info(f"Trunk mask computed: method='{method}', thresh={thresh:.1f}, coverage={coverage:.3f} (target: ~0.3-0.5)")
-    if coverage > 0.8:
-        logger.warning(f"Trunk mask coverage is extremely high ({coverage:.3f}). Background may be leaking!")
+    logger.info(f"Trunk mask computed (CT-air border): coverage={coverage:.3f}")
 
     return mask
 
@@ -141,6 +144,33 @@ def volume_slice_to_pseudo_rgb(
     # Stack as (3, H', W')
     rgb = np.stack(slices, axis=0).astype(np.float32)
     return rgb
+
+
+def crop_to_mask(volume: np.ndarray, mask: np.ndarray) -> Tuple[np.ndarray, np.ndarray, Tuple[slice, slice, slice]]:
+    """
+    Crop the volume and mask to the bounding box of the non-zero mask entries.
+    Returns:
+        cropped_volume, cropped_mask, bbox_slices
+    """
+    non_zeros = np.nonzero(mask)
+    if len(non_zeros[0]) == 0:
+        # Fallback if mask is somehow completely empty
+        return volume, mask, (slice(None), slice(None), slice(None))
+
+    z_min, z_max = np.min(non_zeros[0]), np.max(non_zeros[0])
+    y_min, y_max = np.min(non_zeros[1]), np.max(non_zeros[1])
+    x_min, x_max = np.min(non_zeros[2]), np.max(non_zeros[2])
+
+    bbox_slices = (
+        slice(z_min, z_max + 1),
+        slice(y_min, y_max + 1),
+        slice(x_min, x_max + 1)
+    )
+
+    cropped_volume = volume[bbox_slices]
+    cropped_mask = mask[bbox_slices]
+
+    return cropped_volume, cropped_mask, bbox_slices
 
 
 def extract_all_pseudo_rgb_slices(

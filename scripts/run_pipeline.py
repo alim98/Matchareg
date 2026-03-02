@@ -19,6 +19,7 @@ import argparse
 import logging
 import sys
 import time
+import functools
 from pathlib import Path
 
 import numpy as np
@@ -35,6 +36,7 @@ from pipeline.data.dataset_thoraxcbct import ThoraxCBCTDataset
 from pipeline.data.preprocessing import (
     robust_intensity_normalize,
     generate_trunk_mask,
+    crop_to_mask,
 )
 from pipeline.features.triplanar_fuser import TriplanarFuser, save_features, load_features
 from pipeline.matching.sampling import (
@@ -53,7 +55,7 @@ from datetime import datetime
 
 # Setup timestamped detailed run folder
 run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-log_dir = PROJECT_ROOT / "detailed_logs" / run_timestamp
+log_dir = Path("/u/almik/feb25/pipeline/detailed_logs") / run_timestamp
 log_dir.mkdir(parents=True, exist_ok=True)
 log_file = log_dir / "pipeline_run.log"
 
@@ -204,11 +206,16 @@ def get_features(
         mask: pre-computed trunk mask (uint8, same shape as volume).
               If None, generates one via thresholding (fallback only).
     """
-    cache_path = config.paths.feature_cache_dir / f"{case_id}_{config.features.backend}.npz"
+    cache_path = config.paths.feature_cache_dir / f"{case_id}_{config.features.backend}_{config.features.fusion_method}.npz"
 
+    # Always clean cache explicitly if needed, but for now we read it if valid
     if config.features.use_cache and cache_path.exists():
         logger.info(f"Loading cached features: {cache_path}")
-        return load_features(cache_path)
+        result = load_features(cache_path)
+        if len(result) == 4: # fused, feat_shape, orig_shape, box_offset
+            return result
+        else:
+            logger.warning("Cache is old (no box_offset found) - recomputing.")
 
     # Use provided mask or fall back to thresholding
     if mask is None:
@@ -216,15 +223,25 @@ def get_features(
         mask = generate_trunk_mask(volume)
 
     vol_norm = robust_intensity_normalize(volume, mask=mask)
+    # Zero out background so feature fields are consistent and scale isn't skewed
+    vol_norm[mask == 0] = 0.0
+    
+    # We do NOT crop to mask anymore to ensure fixed and moving spaces 
+    # use the exact same grid boundaries, avoiding ViT scale/rezise discrepancies.
+    box_offset = np.array([0, 0, 0])
+    vol_cropped = vol_norm
 
     # Extract tri-planar features (returns tuple)
-    result = fuser.fuse_triplanar(vol_norm)
+    result = fuser.fuse_triplanar(vol_cropped)
+    fused, feat_shape, cropped_shape = result
+
+    final_result = (fused, feat_shape, cropped_shape, box_offset)
 
     # Cache
     if config.features.use_cache:
-        save_features(result, cache_path)
+        save_features(final_result, cache_path)
 
-    return result
+    return final_result
 
 
 @log_and_validate
@@ -235,6 +252,7 @@ def sample_and_describe(
     mask: np.ndarray,
     n_points: int,
     downsample: int,
+    box_offset: np.ndarray,
     keypoints: np.ndarray = None,
     rng: np.random.RandomState = None,
     z_stratified: bool = True,
@@ -267,8 +285,11 @@ def sample_and_describe(
         voxel_pts = include_keypoints(voxel_pts, keypoints_sub, mask=mask)
         logger.info(f"    Added {len(keypoints_sub)} keypoint anchors → {len(voxel_pts)} total points")
 
-    # Convert to feature grid coords
-    feat_pts = voxel_to_feature_coords(voxel_pts, orig_shape, feat_shape, downsample)
+    # Shift voxel points by bbox offset because feature map is computed on cropped volume
+    shifted_voxel_pts = voxel_pts - box_offset
+
+    # Convert to feature grid coords (using orig_shape, which here is actually the cropped shape)
+    feat_pts = voxel_to_feature_coords(shifted_voxel_pts, orig_shape, feat_shape, downsample)
 
     # Sample descriptors
     desc = sample_descriptors_at_points(feats, feat_pts)
@@ -295,6 +316,8 @@ def run_matching_stage(
     moving_img: np.ndarray,
     n_points: int,
     downsample: int,
+    fixed_box_offset: np.ndarray,
+    moving_box_offset: np.ndarray,
     viz: "PipelineVisualizer" = None,
     displacement: torch.Tensor = None,
     fixed_keypoints: np.ndarray = None,
@@ -322,7 +345,7 @@ def run_matching_stage(
     # Sample and describe fixed points
     fixed_voxel_pts, fixed_desc = sample_and_describe(
         fixed_feats, fixed_feat_shape, fixed_orig_shape,
-        fixed_mask, n_points, downsample,
+        fixed_mask, n_points, downsample, fixed_box_offset,
         keypoints=fixed_keypoints, rng=rng,
         z_stratified=config.sampling.z_stratified,
         n_keypoint_anchors=kp_cap,
@@ -332,22 +355,25 @@ def run_matching_stage(
     rng_m = np.random.RandomState(123)
     moving_voxel_pts, moving_desc = sample_and_describe(
         moving_feats, moving_feat_shape, moving_orig_shape,
-        moving_mask, n_points, downsample,
+        moving_mask, n_points, downsample, moving_box_offset,
         keypoints=moving_keypoints, rng=rng_m,
         z_stratified=config.sampling.z_stratified,
         n_keypoint_anchors=kp_cap,
     )
 
-    # If we have a current displacement, warp moving points to align
-    # with fixed space for better matching (GWOT↔fit alternation)
+    # If we have a current displacement, warp FIXED points into moving space
+    # (because the field convention is d(x) = moving - fixed)
     if displacement is not None:
-        warped_moving_pts = warp_points(moving_voxel_pts, displacement)
-        logger.info(f"  [{stage_name}] Warped moving points with current displacement")
+        warped_fixed_pts = warp_points(fixed_voxel_pts, displacement)
+        pts_src_geom = moving_voxel_pts
+        pts_tgt_geom = warped_fixed_pts
+        logger.info(f"  [{stage_name}] Warped fixed points with current displacement")
     else:
-        warped_moving_pts = moving_voxel_pts
+        pts_src_geom = moving_voxel_pts
+        pts_tgt_geom = fixed_voxel_pts
 
     if viz is not None:
-        viz.sampled_points(fixed_img, moving_img, fixed_voxel_pts, warped_moving_pts, stage_name)
+        viz.sampled_points(fixed_img, moving_img, fixed_voxel_pts, moving_voxel_pts, stage_name)
 
     # Diagnostic: cosine similarity
     n_sample = min(500, len(fixed_desc))
@@ -356,7 +382,7 @@ def run_matching_stage(
                 f"mean={cos_sample.mean():.3f}, std={cos_sample.std():.3f}, "
                 f"max={cos_sample.max():.3f}")
 
-    # Match — use WARPED moving points for spatial priors (closer to fixed)
+    # Match — use warped geometry for spatial priors
     logger.info(f"  [{stage_name}] Matching ({config.matcher.method})...")
     match_kwargs = {}
     if config.matcher.method == "gwot":
@@ -378,7 +404,7 @@ def run_matching_stage(
 
 
     match_result = match(
-        moving_desc, fixed_desc, warped_moving_pts, fixed_voxel_pts,
+        moving_desc, fixed_desc, pts_src_geom, pts_tgt_geom,
         method=config.matcher.method, **match_kwargs
     )
 
@@ -395,11 +421,12 @@ def run_matching_stage(
 
     filtered = filter_matches(
         match_result, moving_voxel_pts, fixed_voxel_pts,
-        confidence_threshold=config.gwot.confidence_threshold,
+        confidence_threshold=config.gwot.confidence_threshold if config.matcher.method == "nn" else 0.0,
         mask_src=moving_mask,
         mask_tgt=fixed_mask,
-        max_displacement=150.0,  # reject physically implausible matches
-        points_src_geom=warped_moving_pts,  # geometry used during matching
+        max_displacement=40.0,  # reject physically implausible matches
+        points_src_geom=pts_src_geom,
+        points_tgt_geom=pts_tgt_geom,
     )
     
     logger.info(f"  [{stage_name}] Matches: {filtered['n_matches']} / {filtered['n_before_filter']}")
@@ -455,6 +482,10 @@ def run_pair(
     fixed_mask  = generate_trunk_mask(fixed_img)
     moving_mask = generate_trunk_mask(moving_img)
 
+    D, H, W = fixed_img.shape
+    total_matches = -1
+    match_result = None
+
     logger.info(f"Dataset stats [Fixed]:  shape={fixed_img.shape}, min={fixed_img.min():.1f}, max={fixed_img.max():.1f}, mean={fixed_img.mean():.1f}, std={fixed_img.std():.1f}")
     logger.info(f"Dataset stats [Moving]: shape={moving_img.shape}, min={moving_img.min():.1f}, max={moving_img.max():.1f}, mean={moving_img.mean():.1f}, std={moving_img.std():.1f}")
     logger.info(f"Mask stats [Fixed]: sum={fixed_mask.sum()}, approx volume={fixed_mask.sum()/(D*H*W)*100:.1f}%")
@@ -502,8 +533,8 @@ def run_pair(
         logger.info("Stage 1: Feature extraction...")
         fixed_result  = get_features(config, fixed_img,  data["fixed_id"],  fuser, mask=fixed_mask)
         moving_result = get_features(config, moving_img, data["moving_id"], fuser, mask=moving_mask)
-        fixed_feats, fixed_feat_shape, fixed_orig_shape = fixed_result
-        moving_feats, moving_feat_shape, moving_orig_shape = moving_result
+        fixed_feats, fixed_feat_shape, fixed_orig_shape, fixed_box_offset = fixed_result
+        moving_feats, moving_feat_shape, moving_orig_shape, moving_box_offset = moving_result
 
         logger.info(f"Feature Map stats [Fixed]:  min={fixed_feats.min():.3f}, max={fixed_feats.max():.3f}, mean={fixed_feats.mean():.3f}, std={fixed_feats.std():.3f}")
         logger.info(f"Feature Map stats [Moving]: min={moving_feats.min():.3f}, max={moving_feats.max():.3f}, mean={moving_feats.mean():.3f}, std={moving_feats.std():.3f}")
@@ -562,6 +593,7 @@ def run_pair(
                 fixed_mask, moving_mask,
                 fixed_img, moving_img,
                 n_pts, downsample,
+                fixed_box_offset, moving_box_offset,
                 viz=viz,
                 displacement=displacement,   # warp moving pts for iter ≥1
                 fixed_keypoints=data["fixed_keypoints"],
