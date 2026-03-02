@@ -1,0 +1,238 @@
+2026-03-01 13:55:08,905 - INFO: Logs are being saved to /u/almik/feb25/pipeline/detailed_logs/20260301_135508/pipeline_run.log
+2026-03-01 13:55:08,906 - INFO: Detailed visualizations and data will be saved to /u/almik/feb25/pipeline/detailed_logs/20260301_135508
+2026-03-01 13:55:08,907 - INFO: === PIPELINE CONFIG ===
+2026-03-01 13:55:08,907 - INFO: {
+  "paths": {
+    "data_root": "/nexus/posix0/MBR-neuralsystems/alim/regdata/ThoraxCBCT/ThoraxCBCT",
+    "dataset_json": "/nexus/posix0/MBR-neuralsystems/alim/regdata/ThoraxCBCT/ThoraxCBCT/ThoraxCBCT_dataset.json",
+    "dinov3_repo": "/u/almik/feb25/dinov3",
+    "matcha_repo": "/u/almik/feb25/matcha",
+    "dinov3_weights": "/u/almik/feb25/dino_weights",
+    "matcha_weights": "/u/almik/feb25/matcha/weights/matcha_pretrained.pth",
+    "output_dir": "/u/almik/feb25/pipeline/output",
+    "feature_cache_dir": "/u/almik/feb25/pipeline/output/feature_cache"
+  },
+  "features": {
+    "backend": "dinov3",
+    "dinov3_model": "vitb16",
+    "patch_size": 16,
+    "embed_dim": 768,
+    "slice_context": 1,
+    "fusion_method": "concat_pca",
+    "pca_dim": 256,
+    "slice_batch_size": 4,
+    "use_cache": true
+  },
+  "sampling": {
+    "n_points_coarse": 8000,
+    "n_points_medium": 15000,
+    "n_points_fine": 25000,
+    "n_points_ot": 2000,
+    "z_stratified": true,
+    "include_keypoints": false,
+    "n_keypoint_anchors": 0
+  },
+  "gwot": {
+    "local_radius": 12.0,
+    "lambda_gw": 0.5,
+    "lambda_prior": 0.2,
+    "epsilon": 0.05,
+    "lambda_mass": 0.0,
+    "max_iter": 100,
+    "mutual_filter": true,
+    "confidence_threshold": 0.01
+  },
+  "fitting": {
+    "grid_spacings": [
+      10.0,
+      6.0,
+      3.0
+    ],
+    "lambda_smooth": 1.0,
+    "lambda_jac": 0.1,
+    "optimizer": "adam",
+    "lr": 0.001,
+    "n_iters_per_level": 200,
+    "n_squaring_steps": 7,
+    "n_outer_iters": 1,
+    "intensity_refine": true
+  },
+  "matcher": {
+    "method": "nn"
+  },
+  "device": "cuda"
+}
+2026-03-01 13:55:08,908 - INFO: Dataset: ThoraxCBCTDataset(split=train, n_pairs=22)
+2026-03-01 13:55:08,908 - INFO: ==> Starting [ create_feature_extractor ]
+2026-03-01 13:55:09,807 - INFO: using base=100 for rope new
+2026-03-01 13:55:09,807 - INFO: using min_period=None for rope new
+2026-03-01 13:55:09,807 - INFO: using max_period=None for rope new
+2026-03-01 13:55:09,807 - INFO: using normalize_coords=separate for rope new
+2026-03-01 13:55:09,807 - INFO: using shift_coords=None for rope new
+2026-03-01 13:55:09,807 - INFO: using rescale_coords=2 for rope new
+2026-03-01 13:55:09,807 - INFO: using jitter_coords=None for rope new
+2026-03-01 13:55:09,807 - INFO: using dtype=fp32 for rope new
+2026-03-01 13:55:09,808 - INFO: using mlp layer as FFN
+2026-03-01 13:55:11,710 - INFO: Converting HuggingFace weights to native DINOv3 format...
+2026-03-01 13:55:14,391 - INFO: DINOv3 weights loaded successfully.
+2026-03-01 13:55:17,342 - INFO: <== Finished [ create_feature_extractor ] in 8.43s
+2026-03-01 13:55:17,342 - INFO: ==> Starting [ run_pair ]
+2026-03-01 13:55:17,342 - INFO: 
+============================================================
+2026-03-01 13:55:17,343 - INFO: Processing pair 0: ThoraxCBCT_0000_0000 → ThoraxCBCT_0000_0001
+2026-03-01 13:55:18,653 - INFO: Initial TRE: 10.264 mm
+2026-03-01 13:55:21,267 - INFO: Trunk mask computed: method='percentile', thresh=-145.4, coverage=0.763 (target: ~0.3-0.5)
+2026-03-01 13:55:23,622 - INFO: Trunk mask computed: method='percentile', thresh=-167.8, coverage=0.696 (target: ~0.3-0.5)
+2026-03-01 13:55:23,698 - INFO: Dataset stats [Fixed]:  shape=(390, 280, 300), min=-2405.7, max=1350.5, mean=-218.0, std=424.1
+2026-03-01 13:55:23,762 - INFO: Dataset stats [Moving]: shape=(390, 280, 300), min=-1000.0, max=2548.7, mean=-247.1, std=406.0
+2026-03-01 13:55:23,777 - INFO: Mask stats [Fixed]: sum=24985575, approx volume=76.3%
+2026-03-01 13:55:23,792 - INFO: Mask stats [Moving]: sum=22797279, approx volume=69.6%
+2026-03-01 13:55:26,702 - INFO:   [viz] saved /u/almik/feb25/pipeline/detailed_logs/20260301_135508/pair_00/00_input.png
+2026-03-01 13:55:27,677 - INFO:   [viz] saved /u/almik/feb25/pipeline/detailed_logs/20260301_135508/pair_00/00_preprocessing.png
+2026-03-01 13:55:27,677 - INFO: 
+Method: dinov3 + nn + SVF
+2026-03-01 13:55:27,677 - INFO: Stage 1: Feature extraction...
+2026-03-01 13:55:27,677 - INFO: ==> Starting [ get_features ]
+2026-03-01 13:55:27,686 - INFO:     arg1.shape: (390, 280, 300), min: -2405.74658203125, max: 1350.4561767578125
+2026-03-01 13:55:27,694 - INFO:     kwarg mask.shape: (390, 280, 300)
+2026-03-01 13:55:28,756 - INFO: Original volume: (386, 276, 296)
+2026-03-01 13:55:28,764 - INFO: Downsampled to: (193, 138, 148) (factor=2)
+2026-03-01 13:55:28,764 - INFO:   axial: 193 slices...
+2026-03-01 13:55:28,845 - INFO:     Resizing slices 138×148 → 448×496 (→ 28×31 patches)
+2026-03-01 13:55:59,144 - INFO:     slice 0/193
+2026-03-01 13:55:59,472 - INFO:     slice 80/193
+2026-03-01 13:55:59,799 - INFO:     slice 160/193
+2026-03-01 13:56:00,041 - INFO:   coronal: 138 slices...
+2026-03-01 13:56:00,131 - INFO:     Resizing slices 193×148 → 592×448 (→ 37×28 patches)
+2026-03-01 13:56:00,163 - INFO:     slice 0/138
+2026-03-01 13:56:00,558 - INFO:     slice 80/138
+2026-03-01 13:56:00,944 - INFO:   sagittal: 148 slices...
+2026-03-01 13:56:01,059 - INFO:     Resizing slices 193×138 → 640×448 (→ 40×28 patches)
+2026-03-01 13:56:01,142 - INFO:     slice 0/148
+2026-03-01 13:56:01,574 - INFO:     slice 80/148
+2026-03-01 13:56:02,013 - INFO:   Unified feature grid: (193, 28, 31)
+2026-03-01 13:56:02,071 - INFO:   axial → (768, 193, 28, 31)
+2026-03-01 13:56:02,104 - INFO:   coronal → (768, 193, 28, 31)
+2026-03-01 13:56:02,143 - INFO:   sagittal → (768, 193, 28, 31)
+2026-03-01 13:56:02,458 - INFO: Concatenated: (2304, 193, 28, 31)
+2026-03-01 13:56:07,602 - INFO: Final fused: (256, 193, 28, 31) (memory: 172 MB)
+2026-03-01 13:56:14,217 - INFO: Saved features to /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_dinov3.npz
+2026-03-01 13:56:14,223 - INFO: <== Finished [ get_features ] in 46.55s
+2026-03-01 13:56:14,223 - INFO:     Output tuple shapes: [(256, 193, 28, 31), <class 'tuple'>, <class 'tuple'>, (3,)]
+2026-03-01 13:56:14,223 - INFO: ==> Starting [ get_features ]
+2026-03-01 13:56:14,233 - INFO:     arg1.shape: (390, 280, 300), min: -1000.0, max: 2548.7490234375
+2026-03-01 13:56:14,243 - INFO:     kwarg mask.shape: (390, 280, 300)
+2026-03-01 13:56:15,202 - INFO: Original volume: (386, 276, 296)
+2026-03-01 13:56:15,209 - INFO: Downsampled to: (193, 138, 148) (factor=2)
+2026-03-01 13:56:15,209 - INFO:   axial: 193 slices...
+2026-03-01 13:56:15,247 - INFO:     Resizing slices 138×148 → 448×496 (→ 28×31 patches)
+2026-03-01 13:56:15,266 - INFO:     slice 0/193
+2026-03-01 13:56:15,592 - INFO:     slice 80/193
+2026-03-01 13:56:15,919 - INFO:     slice 160/193
+2026-03-01 13:56:16,140 - INFO:   coronal: 138 slices...
+2026-03-01 13:56:16,175 - INFO:     Resizing slices 193×148 → 592×448 (→ 37×28 patches)
+2026-03-01 13:56:16,199 - INFO:     slice 0/138
+2026-03-01 13:56:16,591 - INFO:     slice 80/138
+2026-03-01 13:56:16,936 - INFO:   sagittal: 148 slices...
+2026-03-01 13:56:17,002 - INFO:     Resizing slices 193×138 → 640×448 (→ 40×28 patches)
+2026-03-01 13:56:17,032 - INFO:     slice 0/148
+2026-03-01 13:56:17,464 - INFO:     slice 80/148
+2026-03-01 13:56:17,900 - INFO:   Unified feature grid: (193, 28, 31)
+2026-03-01 13:56:17,933 - INFO:   axial → (768, 193, 28, 31)
+2026-03-01 13:56:17,965 - INFO:   coronal → (768, 193, 28, 31)
+2026-03-01 13:56:18,004 - INFO:   sagittal → (768, 193, 28, 31)
+2026-03-01 13:56:18,311 - INFO: Concatenated: (2304, 193, 28, 31)
+2026-03-01 13:56:23,626 - INFO: Final fused: (256, 193, 28, 31) (memory: 172 MB)
+2026-03-01 13:56:30,096 - INFO: Saved features to /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0000_dinov3.npz
+2026-03-01 13:56:30,102 - INFO: <== Finished [ get_features ] in 15.88s
+2026-03-01 13:56:30,102 - INFO:     Output tuple shapes: [(256, 193, 28, 31), <class 'tuple'>, <class 'tuple'>, (3,)]
+2026-03-01 13:56:30,189 - INFO: Feature Map stats [Fixed]:  min=-0.803, max=0.794, mean=0.000, std=0.063
+2026-03-01 13:56:30,276 - INFO: Feature Map stats [Moving]: min=-0.866, max=0.692, mean=0.000, std=0.062
+2026-03-01 13:56:31,947 - INFO:   [viz] saved /u/almik/feb25/pipeline/detailed_logs/20260301_135508/pair_00/01_features.png
+2026-03-01 13:56:31,947 - INFO: Outer loop: 1 iteration(s) of match+fit
+2026-03-01 13:56:31,947 - INFO: 
+Outer iter 1/1: 8000 pts, matcher=nn
+2026-03-01 13:56:31,947 - INFO: ==> Starting [ run_matching_stage ]
+2026-03-01 13:56:31,961 - INFO:     arg1.shape: (256, 193, 28, 31), min: -0.8029256463050842, max: 0.7936339378356934
+2026-03-01 13:56:31,987 - INFO:     arg2.shape: (256, 193, 28, 31), min: -0.865571916103363, max: 0.6918631196022034
+2026-03-01 13:56:32,002 - INFO:     arg7.shape: (390, 280, 300), min: 0, max: 1
+2026-03-01 13:56:32,011 - INFO:     arg8.shape: (390, 280, 300), min: 0, max: 1
+2026-03-01 13:56:32,029 - INFO:     arg9.shape: (390, 280, 300), min: -2405.74658203125, max: 1350.4561767578125
+2026-03-01 13:56:32,049 - INFO:     arg10.shape: (390, 280, 300), min: -1000.0, max: 2548.7490234375
+2026-03-01 13:56:32,058 - INFO:     arg13.shape: (3,), min: 2, max: 2
+2026-03-01 13:56:32,058 - INFO:     arg14.shape: (3,), min: 2, max: 2
+2026-03-01 13:56:32,058 - INFO:     kwarg fixed_keypoints.shape: (30896, 3)
+2026-03-01 13:56:32,058 - INFO:     kwarg moving_keypoints.shape: (30896, 3)
+2026-03-01 13:56:32,059 - INFO:   [iter1] Sampling 8000 points...
+2026-03-01 13:56:32,059 - INFO: ==> Starting [ sample_and_describe ]
+2026-03-01 13:56:32,073 - INFO:     arg0.shape: (256, 193, 28, 31), min: -0.8029256463050842, max: 0.7936339378356934
+2026-03-01 13:56:32,089 - INFO:     arg3.shape: (390, 280, 300), min: 0, max: 1
+2026-03-01 13:56:32,092 - INFO:     arg6.shape: (3,), min: 2, max: 2
+2026-03-01 13:56:32,092 - INFO:     kwarg keypoints.shape: (30896, 3)
+2026-03-01 13:56:32,485 - INFO: ==> Starting [ voxel_to_feature_coords ]
+2026-03-01 13:56:32,485 - INFO:     arg0.shape: (8000, 3), min: 0.0, max: 385.0
+2026-03-01 13:56:32,486 - INFO: <== Finished [ voxel_to_feature_coords ] in 0.00s
+2026-03-01 13:56:32,486 - INFO:     Output shape: (8000, 3)
+2026-03-01 13:56:32,500 - INFO: <== Finished [ sample_and_describe ] in 0.44s
+2026-03-01 13:56:32,500 - INFO:     Output tuple shapes: [(8000, 3), (8000, 256)]
+2026-03-01 13:56:32,500 - INFO: ==> Starting [ sample_and_describe ]
+2026-03-01 13:56:32,514 - INFO:     arg0.shape: (256, 193, 28, 31), min: -0.865571916103363, max: 0.6918631196022034
+2026-03-01 13:56:32,530 - INFO:     arg3.shape: (390, 280, 300), min: 0, max: 1
+2026-03-01 13:56:32,533 - INFO:     arg6.shape: (3,), min: 2, max: 2
+2026-03-01 13:56:32,533 - INFO:     kwarg keypoints.shape: (30896, 3)
+2026-03-01 13:56:32,901 - INFO: ==> Starting [ voxel_to_feature_coords ]
+2026-03-01 13:56:32,901 - INFO:     arg0.shape: (8000, 3), min: 0.0, max: 385.0
+2026-03-01 13:56:32,901 - INFO: <== Finished [ voxel_to_feature_coords ] in 0.00s
+2026-03-01 13:56:32,901 - INFO:     Output shape: (8000, 3)
+2026-03-01 13:56:32,912 - INFO: <== Finished [ sample_and_describe ] in 0.41s
+2026-03-01 13:56:32,912 - INFO:     Output tuple shapes: [(8000, 3), (8000, 256)]
+2026-03-01 13:56:33,909 - INFO:   [viz] saved /u/almik/feb25/pipeline/detailed_logs/20260301_135508/pair_00/01_sampled_points_iter1.png
+2026-03-01 13:56:33,923 - INFO:   [iter1] Cosine sim (sample): mean=-0.009, std=0.306, max=0.694
+2026-03-01 13:56:33,923 - INFO:   [iter1] Matching (nn)...
+2026-03-01 13:56:34,168 - INFO:   NN matching: 111/8000 matches (mutual: 149, sim>0.3: 8000, spatial<150.0: 5972)
+2026-03-01 13:56:34,194 - INFO:   [iter1] Matches: 111 / 111
+2026-03-01 13:56:34,194 - INFO:   [iter1] Match distances (filtered): min=15.03, max=149.71, mean=87.90, std=40.20
+2026-03-01 13:56:34,194 - INFO: <== Finished [ run_matching_stage ] in 2.25s
+2026-03-01 13:56:34,199 - INFO: Level 1/3: grid_spacing=10.0, iters=200
+2026-03-01 13:56:42,647 - INFO:   iter 50/200: loss=1499.2750 (corr=1499.2750, smooth=0.0000, jac=0.0000)
+2026-03-01 13:56:50,766 - INFO:   iter 100/200: loss=1489.0989 (corr=1489.0989, smooth=0.0000, jac=0.0000)
+2026-03-01 13:56:58,832 - INFO:   iter 150/200: loss=1484.2627 (corr=1484.2627, smooth=0.0000, jac=0.0000)
+2026-03-01 13:57:06,918 - INFO:   iter 200/200: loss=1483.3298 (corr=1483.3298, smooth=0.0000, jac=0.0000)
+2026-03-01 13:57:06,919 - INFO:   Mean correspondence error: 86.414 voxels
+2026-03-01 13:57:06,919 - INFO: Level 2/3: grid_spacing=6.0, iters=200
+2026-03-01 13:57:14,609 - INFO:   iter 50/200: loss=932.9064 (corr=932.9064, smooth=0.0000, jac=0.0000)
+2026-03-01 13:57:22,207 - INFO:   iter 100/200: loss=929.2318 (corr=929.2318, smooth=0.0000, jac=0.0000)
+2026-03-01 13:57:29,758 - INFO:   iter 150/200: loss=927.4814 (corr=927.4814, smooth=0.0000, jac=0.0000)
+2026-03-01 13:57:37,300 - INFO:   iter 200/200: loss=927.1437 (corr=927.1437, smooth=0.0000, jac=0.0000)
+2026-03-01 13:57:37,305 - INFO:   Mean correspondence error: 85.528 voxels
+2026-03-01 13:57:37,305 - INFO: Level 3/3: grid_spacing=3.0, iters=200
+2026-03-01 13:57:44,440 - INFO:   iter 50/200: loss=780.5966 (corr=780.5966, smooth=0.0000, jac=0.0000)
+2026-03-01 13:57:51,580 - INFO:   iter 100/200: loss=779.0688 (corr=779.0688, smooth=0.0000, jac=0.0000)
+2026-03-01 13:57:58,713 - INFO:   iter 150/200: loss=778.3403 (corr=778.3403, smooth=0.0000, jac=0.0000)
+2026-03-01 13:58:05,845 - INFO:   iter 200/200: loss=778.1997 (corr=778.1997, smooth=0.0000, jac=0.0000)
+2026-03-01 13:58:05,851 - INFO:   Mean correspondence error: 85.087 voxels
+2026-03-01 13:58:05,867 - INFO:   Iter 1 displacement: max=2.3, mean=0.1
+2026-03-01 13:58:05,868 - INFO:   Displacement: max=2.3, mean=0.1
+2026-03-01 13:58:06,325 - INFO:   [viz] saved /u/almik/feb25/pipeline/detailed_logs/20260301_135508/pair_00/02_matches.png
+2026-03-01 13:58:07,141 - INFO:   [viz] saved /u/almik/feb25/pipeline/detailed_logs/20260301_135508/pair_00/03_displacement.png
+2026-03-01 13:58:07,270 - INFO: 
+  === EVALUATION (DINO-Reg convention) ===
+2026-03-01 13:58:07,271 - INFO:   Initial TRE: 10.264 mm
+2026-03-01 13:58:07,272 - INFO:   DINO-Reg eval (sample@fixed, compare to moving): 10.308 mm
+2026-03-01 13:58:07,272 - INFO:   Axis 0: ideal mean=+0.89 std=5.68, actual mean=-0.01 std=0.33, corr=-0.069
+2026-03-01 13:58:07,273 - INFO:   Axis 1: ideal mean=+0.23 std=4.25, actual mean=+0.03 std=0.32, corr=+0.005
+2026-03-01 13:58:07,273 - INFO:   Axis 2: ideal mean=-3.52 std=9.91, actual mean=-0.02 std=0.33, corr=-0.036
+2026-03-01 13:58:07,273 - INFO: 
+Stage 5: Intensity refinement (local NCC)...
+2026-03-01 13:58:08,571 - INFO: Intensity refinement: grid_spacing=3.0, iters=50, λ_smooth=5.0
+2026-03-01 13:58:14,303 - INFO:   iter 10/50: loss=0.8863 (ncc=0.8863, smooth=0.0000)
+2026-03-01 13:58:19,964 - INFO:   iter 20/50: loss=0.8851 (ncc=0.8851, smooth=0.0000)
+2026-03-01 13:58:25,623 - INFO:   iter 30/50: loss=0.8840 (ncc=0.8839, smooth=0.0000)
+2026-03-01 13:58:31,279 - INFO:   iter 40/50: loss=0.8829 (ncc=0.8827, smooth=0.0000)
+2026-03-01 13:58:36,935 - INFO:   iter 50/50: loss=0.8818 (ncc=0.8815, smooth=0.0001)
+2026-03-01 13:58:37,064 - INFO:   Post-NCC TRE: 10.307 mm
+2026-03-01 13:58:37,064 - INFO: 
+Stage 6: Evaluation...
+2026-03-01 13:59:34,406 - INFO:   [viz] saved /u/almik/feb25/pipeline/detailed_logs/20260301_135508/pair_00/04_output.png
+2026-03-01 13:59:34,492 - INFO: Total runtime: 199.7s
+2026-03-01 13:59:34,569 - INFO: <== Finished [ run_pair ] in 257.23s
