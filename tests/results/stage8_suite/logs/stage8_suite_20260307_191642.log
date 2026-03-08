@@ -1,0 +1,259 @@
+stage8 suite log: /u/almik/feb25/pipeline/tests/results/stage8_suite/logs/stage8_suite_20260307_191642.log
+pair=0 device=cuda downsample=2 batch_size=4 n_points=4000
+
+================================================================================
+RUNNING: test_8_coordinate_sampling_audit
+COMMAND: python3 -m pipeline.tests.test_8_coordinate_sampling_audit --pair 0 --feature all --device cuda --downsample 2 --batch-size 4
+================================================================================
+2026-03-07 19:16:50,795 INFO: Logging to /viper/u2/almik/feb25/pipeline/tests/results/test_8_coordinate_sampling/logs/test_8_coordinate_sampling_20260307_191650.log
+2026-03-07 19:16:53,375 INFO: synthetic sampling: mean_abs_err=0.000000, max_abs_err=0.000001
+2026-03-07 19:18:12,751 INFO: dinov3: identity nn@1=100.0% same_mean=1.000 shifted_mean=0.990 mapping_max_err=0.000000
+xFormers not available
+xFormers not available
+Cannot initialize model with low cpu memory usage because `accelerate` was not found in the environment. Defaulting to `low_cpu_mem_usage=False`. It is strongly recommended to install `accelerate` for faster and less memory-intense model loading. You can do so with: 
+```
+pip install accelerate
+```
+.
+Cannot initialize model with low cpu memory usage because `accelerate` was not found in the environment. Defaulting to `low_cpu_mem_usage=False`. It is strongly recommended to install `accelerate` for faster and less memory-intense model loading. You can do so with: 
+```
+pip install accelerate
+```
+.
+Warning, cannot find cuda-compiled version of RoPE2D, using a slow pytorch version instead
+BaseFeature - config:namespace(topK=4096, upsampling=0, image_size=None, scale_factor=32, keypoint_method=None, max_length=None, device='cuda')
+Number of parameters corr net: 128
+Loading pipeline components...:   0%|          | 0/6 [00:00<?, ?it/s]Loading pipeline components...:  67%|██████▋   | 4/6 [00:00<00:00, 37.13it/s]Loading pipeline components...: 100%|██████████| 6/6 [00:00<00:00, 37.62it/s]
+/viper/u2/almik/feb25/pipeline/features/matcha_extractor.py:62: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  state_dict = torch.load(weights_path, map_location=self.device)
+namespace(topK=4096, upsampling=0, image_size=None, scale_factor=32, keypoint_method=None, max_length=None, device='cuda')
+2026-03-07 19:27:26,000 INFO: matcha: identity nn@1=100.0% same_mean=1.000 shifted_mean=0.976 mapping_max_err=0.000000
+2026-03-07 19:27:27,995 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_mind_coord_identity_ds2.npz
+2026-03-07 19:27:31,496 INFO: mind: identity nn@1=91.7% same_mean=1.000 shifted_mean=0.860 mapping_max_err=0.000000
+2026-03-07 19:27:32,600 INFO: ================================================================================
+2026-03-07 19:27:32,600 INFO: SUMMARY
+2026-03-07 19:27:32,600 INFO: ================================================================================
+2026-03-07 19:27:32,600 INFO: dinov3: nn@1=100.0% same=1.000 shifted=0.990 mapping_err=0.000000
+2026-03-07 19:27:32,600 INFO: matcha: nn@1=100.0% same=1.000 shifted=0.976 mapping_err=0.000000
+2026-03-07 19:27:32,600 INFO: mind: nn@1=91.7% same=1.000 shifted=0.860 mapping_err=0.000000
+RESULT: PASS - test_8_coordinate_sampling_audit
+
+================================================================================
+RUNNING: test_9_backend_feature_audit
+COMMAND: python3 -m pipeline.tests.test_9_backend_feature_audit --pair 0 --feature all --device cuda --downsample 2 --batch-size 4 --n-points 4000
+================================================================================
+2026-03-07 19:27:37,954 INFO: Logging to /viper/u2/almik/feb25/pipeline/tests/results/test_9_backend_feature_audit/logs/test_9_backend_feature_audit_20260307_192737.log
+2026-03-07 19:27:56,468 INFO: ================================================================================
+2026-03-07 19:27:56,468 INFO: BACKEND dinov3
+2026-03-07 19:27:56,468 INFO: ================================================================================
+2026-03-07 19:27:58,428 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_dinov3_real_fixed_ds2.npz
+2026-03-07 19:28:05,180 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0000_dinov3_real_moving_ds2.npz
+2026-03-07 19:28:12,274 INFO: real: pos=0.771 neg=0.560 sep=0.210 nn@1=49.6%
+2026-03-07 19:28:12,399 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_fixed_dinov3_synthetic_fixed_ds2.npz
+2026-03-07 19:28:19,184 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_moving_dinov3_synthetic_moving_ds2.npz
+2026-03-07 19:28:26,182 INFO: synthetic: pos=0.913 neg=0.607 sep=0.306 nn@1=86.2%
+2026-03-07 19:28:27,574 INFO: labels: feature stage looks usable
+2026-03-07 19:28:27,898 INFO: ================================================================================
+2026-03-07 19:28:27,899 INFO: BACKEND matcha
+2026-03-07 19:28:27,900 INFO: ================================================================================
+xFormers not available
+xFormers not available
+Cannot initialize model with low cpu memory usage because `accelerate` was not found in the environment. Defaulting to `low_cpu_mem_usage=False`. It is strongly recommended to install `accelerate` for faster and less memory-intense model loading. You can do so with: 
+```
+pip install accelerate
+```
+.
+Cannot initialize model with low cpu memory usage because `accelerate` was not found in the environment. Defaulting to `low_cpu_mem_usage=False`. It is strongly recommended to install `accelerate` for faster and less memory-intense model loading. You can do so with: 
+```
+pip install accelerate
+```
+.
+Warning, cannot find cuda-compiled version of RoPE2D, using a slow pytorch version instead
+BaseFeature - config:namespace(topK=4096, upsampling=0, image_size=None, scale_factor=32, keypoint_method=None, max_length=None, device='cuda')
+Number of parameters corr net: 128
+Loading pipeline components...:   0%|          | 0/6 [00:00<?, ?it/s]Loading pipeline components...: 100%|██████████| 6/6 [00:00<00:00, 42.32it/s]Loading pipeline components...: 100%|██████████| 6/6 [00:00<00:00, 42.26it/s]
+/viper/u2/almik/feb25/pipeline/features/matcha_extractor.py:62: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  state_dict = torch.load(weights_path, map_location=self.device)
+namespace(topK=4096, upsampling=0, image_size=None, scale_factor=32, keypoint_method=None, max_length=None, device='cuda')
+2026-03-07 19:28:51,929 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_matcha_real_fixed_ds2.npz
+2026-03-07 19:29:27,959 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0000_matcha_real_moving_ds2.npz
+2026-03-07 19:30:04,455 INFO: real: pos=0.684 neg=0.367 sep=0.317 nn@1=74.0%
+2026-03-07 19:30:05,021 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_fixed_matcha_synthetic_fixed_ds2.npz
+2026-03-07 19:30:41,249 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_moving_matcha_synthetic_moving_ds2.npz
+2026-03-07 19:31:18,020 INFO: synthetic: pos=0.884 neg=0.397 sep=0.487 nn@1=99.4%
+2026-03-07 19:31:19,431 INFO: labels: feature signal collapses on real CT/CBCT
+2026-03-07 19:31:19,937 INFO: ================================================================================
+2026-03-07 19:31:19,938 INFO: BACKEND mind
+2026-03-07 19:31:19,938 INFO: ================================================================================
+2026-03-07 19:31:19,940 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_mind_real_fixed_ds2.npz
+2026-03-07 19:31:22,433 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0000_mind_real_moving_ds2.npz
+2026-03-07 19:31:25,896 INFO: real: pos=0.767 neg=0.743 sep=0.024 nn@1=1.0%
+2026-03-07 19:31:25,960 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_fixed_mind_synthetic_fixed_ds2.npz
+2026-03-07 19:31:28,445 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_moving_mind_synthetic_moving_ds2.npz
+2026-03-07 19:31:31,188 INFO: synthetic: pos=0.978 neg=0.757 sep=0.222 nn@1=85.2%
+2026-03-07 19:31:32,036 INFO: labels: domain transfer bottleneck, weak feature separation on real data, feature signal collapses on real CT/CBCT
+2026-03-07 19:31:32,456 INFO: ================================================================================
+2026-03-07 19:31:32,457 INFO: SUMMARY
+2026-03-07 19:31:32,457 INFO: ================================================================================
+2026-03-07 19:31:32,457 INFO: dinov3: real nn@1=49.6% synthetic nn@1=86.2% real sep=0.210 synthetic sep=0.306
+2026-03-07 19:31:32,457 INFO:   labels: feature stage looks usable
+2026-03-07 19:31:32,457 INFO: matcha: real nn@1=74.0% synthetic nn@1=99.4% real sep=0.317 synthetic sep=0.487
+2026-03-07 19:31:32,457 INFO:   labels: feature signal collapses on real CT/CBCT
+2026-03-07 19:31:32,457 INFO: mind: real nn@1=1.0% synthetic nn@1=85.2% real sep=0.024 synthetic sep=0.222
+2026-03-07 19:31:32,457 INFO:   labels: domain transfer bottleneck, weak feature separation on real data, feature signal collapses on real CT/CBCT
+RESULT: PASS - test_9_backend_feature_audit
+
+================================================================================
+RUNNING: test_10_backend_matching_audit
+COMMAND: python3 -m pipeline.tests.test_10_backend_matching_audit --pair 0 --feature all --device cuda --downsample 2 --batch-size 4
+================================================================================
+2026-03-07 19:31:37,742 INFO: Logging to /viper/u2/almik/feb25/pipeline/tests/results/test_10_backend_matching_audit/logs/test_10_backend_matching_audit_20260307_193137.log
+2026-03-07 19:31:55,724 INFO: ================================================================================
+2026-03-07 19:31:55,725 INFO: BACKEND dinov3
+2026-03-07 19:31:55,725 INFO: ================================================================================
+2026-03-07 19:32:02,218 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_dinov3_real_fixed_ds2.npz
+2026-03-07 19:32:08,899 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0000_dinov3_real_moving_ds2.npz
+2026-03-07 19:32:19,603 INFO: real: gt(nn/ot/gwot)=66.2/98.3/98.3 distractor(nn/gwot)=78.5/32.5
+2026-03-07 19:32:24,210 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_fixed_dinov3_synthetic_fixed_ds2.npz
+2026-03-07 19:32:30,919 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_moving_dinov3_synthetic_moving_ds2.npz
+2026-03-07 19:32:41,399 INFO: synthetic: gt(nn/ot/gwot)=96.9/100.0/100.0 distractor(nn/gwot)=94.3/67.5
+2026-03-07 19:32:42,448 INFO: labels: gwot hurts realistic matching, gwot extraction/objective weaker than nn
+2026-03-07 19:32:42,723 INFO: ================================================================================
+2026-03-07 19:32:42,724 INFO: BACKEND matcha
+2026-03-07 19:32:42,724 INFO: ================================================================================
+xFormers not available
+xFormers not available
+Cannot initialize model with low cpu memory usage because `accelerate` was not found in the environment. Defaulting to `low_cpu_mem_usage=False`. It is strongly recommended to install `accelerate` for faster and less memory-intense model loading. You can do so with: 
+```
+pip install accelerate
+```
+.
+Cannot initialize model with low cpu memory usage because `accelerate` was not found in the environment. Defaulting to `low_cpu_mem_usage=False`. It is strongly recommended to install `accelerate` for faster and less memory-intense model loading. You can do so with: 
+```
+pip install accelerate
+```
+.
+Warning, cannot find cuda-compiled version of RoPE2D, using a slow pytorch version instead
+BaseFeature - config:namespace(topK=4096, upsampling=0, image_size=None, scale_factor=32, keypoint_method=None, max_length=None, device='cuda')
+Number of parameters corr net: 128
+Loading pipeline components...:   0%|          | 0/6 [00:00<?, ?it/s]Loading pipeline components...:  67%|██████▋   | 4/6 [00:00<00:00, 29.08it/s]Loading pipeline components...: 100%|██████████| 6/6 [00:00<00:00, 41.68it/s]
+/viper/u2/almik/feb25/pipeline/features/matcha_extractor.py:62: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  state_dict = torch.load(weights_path, map_location=self.device)
+namespace(topK=4096, upsampling=0, image_size=None, scale_factor=32, keypoint_method=None, max_length=None, device='cuda')
+2026-03-07 19:33:11,343 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_matcha_real_fixed_ds2.npz
+2026-03-07 19:33:47,165 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0000_matcha_real_moving_ds2.npz
+2026-03-07 19:34:29,203 INFO: real: gt(nn/ot/gwot)=80.7/96.6/95.6 distractor(nn/gwot)=84.2/65.5
+2026-03-07 19:34:33,764 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_fixed_matcha_synthetic_fixed_ds2.npz
+2026-03-07 19:35:09,548 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_moving_matcha_synthetic_moving_ds2.npz
+2026-03-07 19:35:51,254 INFO: synthetic: gt(nn/ot/gwot)=100.0/100.0/100.0 distractor(nn/gwot)=99.2/97.5
+2026-03-07 19:35:52,223 INFO: labels: gwot hurts realistic matching
+2026-03-07 19:35:52,648 INFO: ================================================================================
+2026-03-07 19:35:52,650 INFO: BACKEND mind
+2026-03-07 19:35:52,650 INFO: ================================================================================
+2026-03-07 19:35:56,774 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_mind_real_fixed_ds2.npz
+2026-03-07 19:35:59,252 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0000_mind_real_moving_ds2.npz
+2026-03-07 19:36:07,045 INFO: real: gt(nn/ot/gwot)=21.4/31.1/29.9 distractor(nn/gwot)=75.0/18.0
+2026-03-07 19:36:11,019 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_fixed_mind_synthetic_fixed_ds2.npz
+2026-03-07 19:36:13,504 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_moving_mind_synthetic_moving_ds2.npz
+2026-03-07 19:36:19,906 INFO: synthetic: gt(nn/ot/gwot)=99.9/100.0/100.0 distractor(nn/gwot)=99.4/85.5
+2026-03-07 19:36:20,366 INFO: labels: gwot hurts realistic matching, nn weak even at gt-aligned points, gwot extraction/objective weaker than nn
+2026-03-07 19:36:20,745 INFO: ================================================================================
+2026-03-07 19:36:20,745 INFO: SUMMARY
+2026-03-07 19:36:20,745 INFO: ================================================================================
+2026-03-07 19:36:20,748 INFO: dinov3: real D2 nn=78.5% gwot=32.5% synthetic D2 nn=94.3% gwot=67.5%
+2026-03-07 19:36:20,748 INFO:   labels: gwot hurts realistic matching, gwot extraction/objective weaker than nn
+2026-03-07 19:36:20,748 INFO: matcha: real D2 nn=84.2% gwot=65.5% synthetic D2 nn=99.2% gwot=97.5%
+2026-03-07 19:36:20,748 INFO:   labels: gwot hurts realistic matching
+2026-03-07 19:36:20,748 INFO: mind: real D2 nn=75.0% gwot=18.0% synthetic D2 nn=99.4% gwot=85.5%
+2026-03-07 19:36:20,748 INFO:   labels: gwot hurts realistic matching, nn weak even at gt-aligned points, gwot extraction/objective weaker than nn
+RESULT: PASS - test_10_backend_matching_audit
+
+================================================================================
+RUNNING: test_11_mind_baseline_audit
+COMMAND: python3 -m pipeline.tests.test_11_mind_baseline_audit --pair 0 --device cuda
+================================================================================
+2026-03-07 19:36:26,087 INFO: Logging to /viper/u2/almik/feb25/pipeline/tests/results/test_11_mind_baseline_audit/logs/test_11_mind_baseline_audit_20260307_193626.log
+MIOpen(HIP): Warning [IsEnoughWorkspace] [GetSolutionsFallback WTI] Solver <GemmFwdRest>, workspace required: 3538080000, provided ptr: 0x14522b000000 size: 1708547072
+MIOpen(HIP): Warning [IsEnoughWorkspace] [EvaluateInvokers] Solver <GemmFwdRest>, workspace required: 3538080000, provided ptr: 0x14522b000000 size: 1708547072
+/u/almik/.local/lib/python3.9/site-packages/torch/nn/functional.py:4969: UserWarning: Default grid_sample and affine_grid behavior has changed to align_corners=False since 1.3.0. Please specify align_corners=True if the old behavior is desired. See the documentation of grid_sample for details.
+  warnings.warn(
+/u/almik/.local/lib/python3.9/site-packages/torch/nn/functional.py:4902: UserWarning: Default grid_sample and affine_grid behavior has changed to align_corners=False since 1.3.0. Please specify align_corners=True if the old behavior is desired. See the documentation of grid_sample for details.
+  warnings.warn(
+mind_fix shape torch.Size([1, 12, 97, 70, 75]) mind_mov shape torch.Size([1, 12, 97, 70, 75]) disp_hw 4 grid_sp 4 shape (390, 280, 300) ch 12
+final ssd shape torch.Size([729, 97, 70, 75]) final ssd_argmin shape torch.Size([97, 70, 75])
+mind_fix shape torch.Size([1, 12, 97, 70, 75]) mind_mov shape torch.Size([1, 12, 97, 70, 75]) disp_hw 4 grid_sp 4 shape (390, 280, 300) ch 12
+final ssd shape torch.Size([729, 97, 70, 75]) final ssd_argmin shape torch.Size([97, 70, 75])
+2026-03-07 19:36:47,082 INFO: real: ours_tre=9.772 orig_tre=9.772
+mind_fix shape torch.Size([1, 12, 97, 70, 75]) mind_mov shape torch.Size([1, 12, 97, 70, 75]) disp_hw 4 grid_sp 4 shape (390, 280, 300) ch 12
+final ssd shape torch.Size([729, 97, 70, 75]) final ssd_argmin shape torch.Size([97, 70, 75])
+mind_fix shape torch.Size([1, 12, 97, 70, 75]) mind_mov shape torch.Size([1, 12, 97, 70, 75]) disp_hw 4 grid_sp 4 shape (390, 280, 300) ch 12
+final ssd shape torch.Size([729, 97, 70, 75]) final ssd_argmin shape torch.Size([97, 70, 75])
+2026-03-07 19:37:03,845 INFO: synthetic: ours_tre=1.294 orig_tre=1.294
+2026-03-07 19:37:04,377 INFO: ================================================================================
+2026-03-07 19:37:04,377 INFO: SUMMARY
+2026-03-07 19:37:04,378 INFO: ================================================================================
+2026-03-07 19:37:04,378 INFO: real: ours_tre=9.772 runtime=18.1s orig_tre=9.772 field_diff_max=0.000000 field_diff_mean=0.000000
+2026-03-07 19:37:04,378 INFO: synthetic: ours_tre=1.294 runtime=0.4s orig_tre=1.294 field_diff_max=0.000000 field_diff_mean=0.000000
+RESULT: PASS - test_11_mind_baseline_audit
+
+================================================================================
+RUNNING: test_12_fitter_stress_audit
+COMMAND: python3 -m pipeline.tests.test_12_fitter_stress_audit --pair 0 --device cuda
+================================================================================
+2026-03-07 19:37:09,114 INFO: Logging to /viper/u2/almik/feb25/pipeline/tests/results/test_12_fitter_stress_audit/logs/test_12_fitter_stress_audit_20260307_193709.log
+2026-03-07 19:37:10,435 INFO: initial_tre=10.264
+2026-03-07 19:37:10,439 INFO: ================================================================================
+2026-03-07 19:37:10,439 INFO: SCENARIO perfect_all n=30896
+2026-03-07 19:37:10,439 INFO: ================================================================================
+2026-03-07 19:38:43,890 INFO: perfect_all: final_tre=0.000 improvement=100.0% jac_neg=0.00% max_axis_corr=1.000 runtime=93.1s
+2026-03-07 19:38:44,137 INFO: ================================================================================
+2026-03-07 19:38:44,138 INFO: SCENARIO perfect_subset_2k n=2000
+2026-03-07 19:38:44,138 INFO: ================================================================================
+2026-03-07 19:40:11,903 INFO: perfect_subset_2k: final_tre=4.401 improvement=57.1% jac_neg=0.00% max_axis_corr=0.893 runtime=87.4s
+2026-03-07 19:40:12,134 INFO: ================================================================================
+2026-03-07 19:40:12,135 INFO: SCENARIO noisy_sigma_2 n=2000
+2026-03-07 19:40:12,135 INFO: ================================================================================
+2026-03-07 19:41:40,332 INFO: noisy_sigma_2: final_tre=6.083 improvement=40.7% jac_neg=0.00% max_axis_corr=0.864 runtime=87.8s
+2026-03-07 19:41:40,539 INFO: ================================================================================
+2026-03-07 19:41:40,540 INFO: SCENARIO noisy_sigma_5 n=2000
+2026-03-07 19:41:40,540 INFO: ================================================================================
+2026-03-07 19:43:09,276 INFO: noisy_sigma_5: final_tre=9.572 improvement=6.7% jac_neg=0.22% max_axis_corr=0.792 runtime=88.4s
+2026-03-07 19:43:09,533 INFO: ================================================================================
+2026-03-07 19:43:09,534 INFO: SCENARIO noisy_sigma_10 n=2000
+2026-03-07 19:43:09,535 INFO: ================================================================================
+2026-03-07 19:44:39,692 INFO: noisy_sigma_10: final_tre=15.557 improvement=-51.6% jac_neg=1.99% max_axis_corr=0.679 runtime=89.8s
+2026-03-07 19:44:39,940 INFO: ================================================================================
+2026-03-07 19:44:39,941 INFO: SCENARIO outlier_10pct n=2000
+2026-03-07 19:44:39,941 INFO: ================================================================================
+2026-03-07 19:46:07,874 INFO: outlier_10pct: final_tre=6.959 improvement=32.2% jac_neg=0.25% max_axis_corr=0.794 runtime=87.6s
+2026-03-07 19:46:08,102 INFO: ================================================================================
+2026-03-07 19:46:08,102 INFO: SCENARIO outlier_30pct n=2000
+2026-03-07 19:46:08,102 INFO: ================================================================================
+2026-03-07 19:47:36,729 INFO: outlier_30pct: final_tre=13.571 improvement=-32.2% jac_neg=1.42% max_axis_corr=0.504 runtime=88.3s
+2026-03-07 19:47:36,974 INFO: ================================================================================
+2026-03-07 19:47:36,975 INFO: SCENARIO outlier_50pct n=2000
+2026-03-07 19:47:36,975 INFO: ================================================================================
+2026-03-07 19:49:06,552 INFO: outlier_50pct: final_tre=21.230 improvement=-106.8% jac_neg=3.75% max_axis_corr=0.314 runtime=89.2s
+2026-03-07 19:49:06,805 INFO: ================================================================================
+2026-03-07 19:49:06,806 INFO: SCENARIO clustered_local_region n=958
+2026-03-07 19:49:06,806 INFO: ================================================================================
+2026-03-07 19:50:36,526 INFO: clustered_local_region: final_tre=10.594 improvement=-3.2% jac_neg=0.00% max_axis_corr=0.141 runtime=89.3s
+2026-03-07 19:50:37,393 INFO: ================================================================================
+2026-03-07 19:50:37,393 INFO: SUMMARY
+2026-03-07 19:50:37,393 INFO: ================================================================================
+2026-03-07 19:50:37,393 INFO: perfect_all: final_tre=0.000 jac_neg=0.00% max_corr=1.000 runtime=93.1s
+2026-03-07 19:50:37,393 INFO: perfect_subset_2k: final_tre=4.401 jac_neg=0.00% max_corr=0.893 runtime=87.4s
+2026-03-07 19:50:37,393 INFO: noisy_sigma_2: final_tre=6.083 jac_neg=0.00% max_corr=0.864 runtime=87.8s
+2026-03-07 19:50:37,393 INFO: noisy_sigma_5: final_tre=9.572 jac_neg=0.22% max_corr=0.792 runtime=88.4s
+2026-03-07 19:50:37,393 INFO: noisy_sigma_10: final_tre=15.557 jac_neg=1.99% max_corr=0.679 runtime=89.8s
+2026-03-07 19:50:37,393 INFO: outlier_10pct: final_tre=6.959 jac_neg=0.25% max_corr=0.794 runtime=87.6s
+2026-03-07 19:50:37,393 INFO: outlier_30pct: final_tre=13.571 jac_neg=1.42% max_corr=0.504 runtime=88.3s
+2026-03-07 19:50:37,393 INFO: outlier_50pct: final_tre=21.230 jac_neg=3.75% max_corr=0.314 runtime=89.2s
+2026-03-07 19:50:37,394 INFO: clustered_local_region: final_tre=10.594 jac_neg=0.00% max_corr=0.141 runtime=89.3s
+RESULT: PASS - test_12_fitter_stress_audit
+
+================================================================================
+STAGE8 SUITE SUMMARY
+TOTAL=5 FAILED=0 PASSED=5
+LOG=/u/almik/feb25/pipeline/tests/results/stage8_suite/logs/stage8_suite_20260307_191642.log
+================================================================================

@@ -1,0 +1,40 @@
+2026-03-07 23:50:11,574 INFO: Logging to /viper/u2/almik/feb25/pipeline/tests/results/test_9_backend_feature_audit/logs/test_9_backend_feature_audit_20260307_235011.log
+2026-03-07 23:50:30,057 INFO: ================================================================================
+2026-03-07 23:50:30,057 INFO: BACKEND dinov3
+2026-03-07 23:50:30,057 INFO: ================================================================================
+2026-03-07 23:50:31,891 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_dinov3_real_fixed_ds2.npz
+2026-03-07 23:50:38,652 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0000_dinov3_real_moving_ds2.npz
+2026-03-07 23:50:45,718 INFO: real: pos=0.771 neg=0.560 sep=0.210 nn@1=49.6%
+2026-03-07 23:50:45,839 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_fixed_dinov3_synthetic_fixed_ds2.npz
+2026-03-07 23:50:52,621 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_moving_dinov3_synthetic_moving_ds2.npz
+2026-03-07 23:50:59,597 INFO: synthetic: pos=0.913 neg=0.607 sep=0.306 nn@1=86.2%
+2026-03-07 23:51:00,992 INFO: labels: feature stage looks usable
+2026-03-07 23:51:01,282 INFO: ================================================================================
+2026-03-07 23:51:01,283 INFO: BACKEND matcha
+2026-03-07 23:51:01,283 INFO: ================================================================================
+2026-03-07 23:51:25,227 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_matcha_real_fixed_ds2.npz
+2026-03-07 23:52:01,368 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0000_matcha_real_moving_ds2.npz
+2026-03-07 23:52:37,918 INFO: real: pos=0.684 neg=0.367 sep=0.317 nn@1=74.0%
+2026-03-07 23:52:38,525 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_fixed_matcha_synthetic_fixed_ds2.npz
+2026-03-07 23:53:14,433 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_moving_matcha_synthetic_moving_ds2.npz
+2026-03-07 23:53:50,873 INFO: synthetic: pos=0.884 neg=0.397 sep=0.487 nn@1=99.4%
+2026-03-07 23:53:52,297 INFO: labels: feature signal collapses on real CT/CBCT
+2026-03-07 23:53:52,743 INFO: ================================================================================
+2026-03-07 23:53:52,745 INFO: BACKEND mind
+2026-03-07 23:53:52,745 INFO: ================================================================================
+2026-03-07 23:53:52,748 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_mind_real_fixed_ds2.npz
+2026-03-07 23:53:55,311 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0000_mind_real_moving_ds2.npz
+2026-03-07 23:53:58,826 INFO: real: pos=0.767 neg=0.743 sep=0.024 nn@1=1.0%
+2026-03-07 23:53:58,897 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_fixed_mind_synthetic_fixed_ds2.npz
+2026-03-07 23:54:01,463 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_moving_mind_synthetic_moving_ds2.npz
+2026-03-07 23:54:04,293 INFO: synthetic: pos=0.978 neg=0.757 sep=0.222 nn@1=85.2%
+2026-03-07 23:54:05,156 INFO: labels: domain transfer bottleneck, weak feature separation on real data, feature signal collapses on real CT/CBCT
+2026-03-07 23:54:05,548 INFO: ================================================================================
+2026-03-07 23:54:05,549 INFO: SUMMARY
+2026-03-07 23:54:05,549 INFO: ================================================================================
+2026-03-07 23:54:05,549 INFO: dinov3: real nn@1=49.6% synthetic nn@1=86.2% real sep=0.210 synthetic sep=0.306
+2026-03-07 23:54:05,550 INFO:   labels: feature stage looks usable
+2026-03-07 23:54:05,550 INFO: matcha: real nn@1=74.0% synthetic nn@1=99.4% real sep=0.317 synthetic sep=0.487
+2026-03-07 23:54:05,550 INFO:   labels: feature signal collapses on real CT/CBCT
+2026-03-07 23:54:05,550 INFO: mind: real nn@1=1.0% synthetic nn@1=85.2% real sep=0.024 synthetic sep=0.222
+2026-03-07 23:54:05,550 INFO:   labels: domain transfer bottleneck, weak feature separation on real data, feature signal collapses on real CT/CBCT

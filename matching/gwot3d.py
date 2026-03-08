@@ -114,6 +114,7 @@ def nn_matching(
     points_tgt: np.ndarray,
     sim_threshold: float = 0.3,
     max_displacement: float = 150.0,
+    margin_threshold: float = 0.0,
 ) -> Dict:
     """
     Nearest-neighbor matching with mutual consistency and similarity threshold.
@@ -124,6 +125,7 @@ def nn_matching(
     Args:
         sim_threshold: minimum cosine similarity to keep
         max_displacement: maximum spatial distance in voxels
+        margin_threshold: minimum gap between the best and second-best cosine match
 
     Returns dict with:
         matches_src_idx: (K,) indices into source
@@ -147,6 +149,15 @@ def nn_matching(
     # Similarity threshold
     sim_ok = fwd_sim >= sim_threshold
 
+    if M >= 2:
+        top2 = np.partition(cos_sim, kth=M - 2, axis=1)[:, -2:]
+        best = top2.max(axis=1)
+        second = top2.min(axis=1)
+        margin = best - second
+    else:
+        margin = np.full(N, np.inf, dtype=cos_sim.dtype)
+    margin_ok = margin >= margin_threshold
+
     # Spatial displacement limit
     if max_displacement is not None and max_displacement > 0:
         disp = np.linalg.norm(
@@ -157,17 +168,25 @@ def nn_matching(
         spatial_ok = np.ones(N, dtype=bool)
 
     # Combine: mutual + sim threshold + spatial
-    valid = mutual & sim_ok & spatial_ok
+    valid = mutual & sim_ok & margin_ok & spatial_ok
 
     logger.info(f"  NN matching: {valid.sum()}/{N} matches "
                 f"(mutual: {mutual.sum()}, "
                 f"sim>{sim_threshold}: {sim_ok.sum()}, "
+                f"margin>{margin_threshold}: {margin_ok.sum()}, "
                 f"spatial<{max_displacement}: {spatial_ok.sum()})")
+
+    if valid.any():
+        scale = max(margin_threshold, 1e-6)
+        distinctiveness = np.clip(margin[valid] / scale, 0.0, 1.0)
+        weights = fwd_sim[valid] * distinctiveness
+    else:
+        weights = fwd_sim[valid]
 
     return {
         "matches_src_idx": src_indices[valid],
         "matches_tgt_idx": fwd_idx[valid],
-        "weights": fwd_sim[valid],
+        "weights": weights,
     }
 
 
@@ -218,7 +237,9 @@ def ot_matching(
     else:
         P = ot.sinkhorn(a, b, C, reg=epsilon, numItermax=max_iter, warn=False)
 
-    return _extract_matches_from_transport(P, N, M)
+    result = _extract_matches_from_transport(P, N, M, C_feat=C_feat)
+    result["transport_matrix"] = P
+    return result
 
 
 
@@ -334,7 +355,7 @@ def gwot_matching(
                 armijo=False, log=False, numItermax=max_iter,
             )
 
-    result = _extract_matches_from_transport(P, N, M)
+    result = _extract_matches_from_transport(P, N, M, C_feat=C_feat)
     result["transport_matrix"] = P
     return result
 
@@ -343,37 +364,97 @@ def _extract_matches_from_transport(
     P: np.ndarray,
     N: int,
     M: int,
+    C_feat: Optional[np.ndarray] = None,
     top_k: Optional[int] = None,
 ) -> Dict:
     """
-    Extract correspondences from transport matrix.
+    Extract correspondences from OT/GWOT transport matrix.
 
-    Uses mutual maximum assignment.
+    Strategy (in order of preference):
+    1. LAP (Linear Assignment Problem) on the transport plan — finds the
+       optimal 1:1 assignment that maximizes total transported mass.
+       Much better than mutual argmax for entropic plans which spread mass.
+    2. Confidence filter — keep only assignments where the transport plan
+       concentrates enough mass (relative to uniform 1/M).
 
     Returns dict with matches_src_idx, matches_tgt_idx, weights.
     """
-    # Forward: each source's best target
-    fwd_idx = np.argmax(P, axis=1)  # (N,)
-    fwd_val = P[np.arange(N), fwd_idx]   # raw transport ≈ 1/N for balanced OT
+    from scipy.optimize import linear_sum_assignment
 
-    # Normalize by row sum → confidence = fraction of source mass at best match.
-    # Raw transport values for balanced OT with N points are ≈ 1/N (e.g. 5e-4
-    # for N=2000). The confidence_threshold=0.01 in filter_matches would kill
-    # everything. Normalizing by row sum rescales to (0, 1] regardless of N,
-    # making it directly comparable to NN's cosine-similarity weights.
-    row_sum = P.sum(axis=1) + 1e-12    # ≈ 1/N for balanced OT
-    fwd_confidence = fwd_val / row_sum  # ∈ (0, 1]
+    # --- LAP assignment on negative transport plan ---
+    # Maximize total mass → minimize negative mass.
+    # LAP alone is too permissive for diffuse transport plans: it will always
+    # return a dense 1:1 assignment even when the plan is nearly uniform.
+    row_ind, col_ind = linear_sum_assignment(-P)
 
-    # Backward: each target's best source
-    bwd_idx = np.argmax(P, axis=0)  # (M,)
+    # Transport mass at each assignment
+    assignment_mass = P[row_ind, col_ind]
 
-    # Mutual consistency
-    src_indices = np.arange(N)
-    mutual = bwd_idx[fwd_idx] == src_indices
+    row_mass = P.sum(axis=1)
+    col_mass = P.sum(axis=0)
+    expected_mass = row_mass[row_ind] * col_mass[col_ind]
 
-    matches_src = src_indices[mutual]
-    matches_tgt = fwd_idx[mutual]
-    weights = fwd_confidence[mutual]   # normalized ∈ (0, 1]
+    # Concentration above independent marginals. For balanced OT this reduces
+    # to the old uniform baseline; for unbalanced OT it stays meaningful.
+    confidence = assignment_mass / (expected_mass + 1e-15)
+
+    # How much of the row/column transport is explained by this assignment.
+    # Diffuse plans have tiny shares even if LAP forces an assignment.
+    row_share = assignment_mass / (row_mass[row_ind] + 1e-15)
+    col_share = assignment_mass / (col_mass[col_ind] + 1e-15)
+
+    MIN_CONCENTRATION = 1.5
+    MIN_ROW_SHARE = 2.5 / max(M, 1)
+    MIN_COL_SHARE = 2.5 / max(N, 1)
+    valid = (
+        (confidence > MIN_CONCENTRATION)
+        & (row_share > MIN_ROW_SHARE)
+        & (col_share > MIN_COL_SHARE)
+    )
+
+    logger.info(
+        "  LAP extraction: %d/%d assignments kept "
+        "(lift>%.1fx expected: %d, row_share>%.4f: %d, col_share>%.4f: %d)"
+        % (
+            int(valid.sum()),
+            len(row_ind),
+            MIN_CONCENTRATION,
+            int((confidence > MIN_CONCENTRATION).sum()),
+            MIN_ROW_SHARE,
+            int((row_share > MIN_ROW_SHARE).sum()),
+            MIN_COL_SHARE,
+            int((col_share > MIN_COL_SHARE).sum()),
+        )
+    )
+
+    matches_src = row_ind[valid]
+    matches_tgt = col_ind[valid]
+
+    # Also log mutual-argmax count for comparison
+    fwd_idx = np.argmax(P, axis=1)
+    bwd_idx = np.argmax(P, axis=0)
+    n_mutual = np.sum(bwd_idx[fwd_idx] == np.arange(N))
+    logger.info(f"  (For reference: mutual-argmax would give {n_mutual} matches)")
+
+    # Weights: use feature similarity when available, slightly boosted by
+    # transport concentration so diffuse-but-similar pairs do not dominate.
+    if len(matches_src) == 0:
+        return {
+            "matches_src_idx": matches_src,
+            "matches_tgt_idx": matches_tgt,
+            "weights": np.zeros(0, dtype=np.float64),
+        }
+
+    if C_feat is not None:
+        feat_sim = 1.0 - C_feat[matches_src, matches_tgt]
+        trans_conf = confidence[valid]
+        trans_conf = trans_conf / (trans_conf.max() + 1e-15)
+        weights = feat_sim * np.sqrt(np.clip(trans_conf, 0.0, 1.0))
+    else:
+        weights = confidence[valid] / confidence[valid].max()  # normalize to [0, 1]
+
+    if top_k is None:
+        top_k = min(max(200, int(0.35 * min(N, M))), 1000)
 
     if top_k is not None and len(matches_src) > top_k:
         top_indices = np.argsort(-weights)[:top_k]
@@ -408,7 +489,7 @@ def match(
         Match result dict with matches_src_idx, matches_tgt_idx, weights
     """
     if method == "nn":
-        return nn_matching(desc_src, desc_tgt, points_src, points_tgt)
+        return nn_matching(desc_src, desc_tgt, points_src, points_tgt, **kwargs)
     elif method == "ot":
         return ot_matching(desc_src, desc_tgt, points_src, points_tgt, **kwargs)
     elif method == "gwot":

@@ -1,0 +1,40 @@
+2026-03-07 19:31:37,742 INFO: Logging to /viper/u2/almik/feb25/pipeline/tests/results/test_10_backend_matching_audit/logs/test_10_backend_matching_audit_20260307_193137.log
+2026-03-07 19:31:55,724 INFO: ================================================================================
+2026-03-07 19:31:55,725 INFO: BACKEND dinov3
+2026-03-07 19:31:55,725 INFO: ================================================================================
+2026-03-07 19:32:02,218 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_dinov3_real_fixed_ds2.npz
+2026-03-07 19:32:08,899 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0000_dinov3_real_moving_ds2.npz
+2026-03-07 19:32:19,603 INFO: real: gt(nn/ot/gwot)=66.2/98.3/98.3 distractor(nn/gwot)=78.5/32.5
+2026-03-07 19:32:24,210 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_fixed_dinov3_synthetic_fixed_ds2.npz
+2026-03-07 19:32:30,919 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_moving_dinov3_synthetic_moving_ds2.npz
+2026-03-07 19:32:41,399 INFO: synthetic: gt(nn/ot/gwot)=96.9/100.0/100.0 distractor(nn/gwot)=94.3/67.5
+2026-03-07 19:32:42,448 INFO: labels: gwot hurts realistic matching, gwot extraction/objective weaker than nn
+2026-03-07 19:32:42,723 INFO: ================================================================================
+2026-03-07 19:32:42,724 INFO: BACKEND matcha
+2026-03-07 19:32:42,724 INFO: ================================================================================
+2026-03-07 19:33:11,343 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_matcha_real_fixed_ds2.npz
+2026-03-07 19:33:47,165 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0000_matcha_real_moving_ds2.npz
+2026-03-07 19:34:29,203 INFO: real: gt(nn/ot/gwot)=80.7/96.6/95.6 distractor(nn/gwot)=84.2/65.5
+2026-03-07 19:34:33,764 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_fixed_matcha_synthetic_fixed_ds2.npz
+2026-03-07 19:35:09,548 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_moving_matcha_synthetic_moving_ds2.npz
+2026-03-07 19:35:51,254 INFO: synthetic: gt(nn/ot/gwot)=100.0/100.0/100.0 distractor(nn/gwot)=99.2/97.5
+2026-03-07 19:35:52,223 INFO: labels: gwot hurts realistic matching
+2026-03-07 19:35:52,648 INFO: ================================================================================
+2026-03-07 19:35:52,650 INFO: BACKEND mind
+2026-03-07 19:35:52,650 INFO: ================================================================================
+2026-03-07 19:35:56,774 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_mind_real_fixed_ds2.npz
+2026-03-07 19:35:59,252 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0000_mind_real_moving_ds2.npz
+2026-03-07 19:36:07,045 INFO: real: gt(nn/ot/gwot)=21.4/31.1/29.9 distractor(nn/gwot)=75.0/18.0
+2026-03-07 19:36:11,019 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_fixed_mind_synthetic_fixed_ds2.npz
+2026-03-07 19:36:13,504 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_moving_mind_synthetic_moving_ds2.npz
+2026-03-07 19:36:19,906 INFO: synthetic: gt(nn/ot/gwot)=99.9/100.0/100.0 distractor(nn/gwot)=99.4/85.5
+2026-03-07 19:36:20,366 INFO: labels: gwot hurts realistic matching, nn weak even at gt-aligned points, gwot extraction/objective weaker than nn
+2026-03-07 19:36:20,745 INFO: ================================================================================
+2026-03-07 19:36:20,745 INFO: SUMMARY
+2026-03-07 19:36:20,745 INFO: ================================================================================
+2026-03-07 19:36:20,748 INFO: dinov3: real D2 nn=78.5% gwot=32.5% synthetic D2 nn=94.3% gwot=67.5%
+2026-03-07 19:36:20,748 INFO:   labels: gwot hurts realistic matching, gwot extraction/objective weaker than nn
+2026-03-07 19:36:20,748 INFO: matcha: real D2 nn=84.2% gwot=65.5% synthetic D2 nn=99.2% gwot=97.5%
+2026-03-07 19:36:20,748 INFO:   labels: gwot hurts realistic matching
+2026-03-07 19:36:20,748 INFO: mind: real D2 nn=75.0% gwot=18.0% synthetic D2 nn=99.4% gwot=85.5%
+2026-03-07 19:36:20,748 INFO:   labels: gwot hurts realistic matching, nn weak even at gt-aligned points, gwot extraction/objective weaker than nn

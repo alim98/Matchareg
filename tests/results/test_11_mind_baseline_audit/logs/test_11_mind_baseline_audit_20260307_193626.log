@@ -1,0 +1,8 @@
+2026-03-07 19:36:26,087 INFO: Logging to /viper/u2/almik/feb25/pipeline/tests/results/test_11_mind_baseline_audit/logs/test_11_mind_baseline_audit_20260307_193626.log
+2026-03-07 19:36:47,082 INFO: real: ours_tre=9.772 orig_tre=9.772
+2026-03-07 19:37:03,845 INFO: synthetic: ours_tre=1.294 orig_tre=1.294
+2026-03-07 19:37:04,377 INFO: ================================================================================
+2026-03-07 19:37:04,377 INFO: SUMMARY
+2026-03-07 19:37:04,378 INFO: ================================================================================
+2026-03-07 19:37:04,378 INFO: real: ours_tre=9.772 runtime=18.1s orig_tre=9.772 field_diff_max=0.000000 field_diff_mean=0.000000
+2026-03-07 19:37:04,378 INFO: synthetic: ours_tre=1.294 runtime=0.4s orig_tre=1.294 field_diff_max=0.000000 field_diff_mean=0.000000

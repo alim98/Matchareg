@@ -1,0 +1,7 @@
+2026-03-07 23:39:06,086 INFO: Logging to /viper/u2/almik/feb25/pipeline/tests/results/test_14_target_pool_matchability_audit/logs/test_14_target_pool_matchability_audit_20260307_233906.log
+2026-03-07 23:41:43,795 INFO: current: matches=227 avail@10=98.7% avail@12=99.3% pck@10=39.2% pck@12=55.5%
+2026-03-07 23:41:43,795 INFO: legacy:  matches=114 avail@10=23.3% avail@12=32.3% pck@10=21.9% pck@12=29.8%
+2026-03-07 23:41:44,106 INFO: ================================================================================
+2026-03-07 23:41:44,106 INFO: SUMMARY
+2026-03-07 23:41:44,106 INFO: ================================================================================
+2026-03-07 23:41:44,106 INFO: current matches=227 pck@10=39.2% pck@12=55.5% | legacy matches=114 pck@10=21.9% pck@12=29.8%

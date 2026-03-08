@@ -51,53 +51,91 @@ def _sample_uniform(
 def _sample_z_stratified(
     mask: np.ndarray, n_points: int, rng: np.random.RandomState
 ) -> np.ndarray:
-    """Stratified sampling: equal points per z-slice (proportional to mask area)."""
-    D = mask.shape[0]
-
-    # Count foreground voxels per slice
-    slice_counts = np.array([np.sum(mask[z] > 0) for z in range(D)])
-    total_fg = slice_counts.sum()
-
+    """Globally anchored lattice sampling with random fill."""
+    coords = np.argwhere(mask > 0)
+    total_fg = len(coords)
     if total_fg == 0:
         raise ValueError("Mask is empty — cannot sample points.")
+    if total_fg <= n_points:
+        return coords.astype(np.float64)
 
-    # Allocate points per slice proportional to mask area
-    slice_fracs = slice_counts / total_fg
-    points_per_slice = np.round(slice_fracs * n_points).astype(int)
+    step = max(1, int(round((total_fg / max(n_points, 1)) ** (1.0 / 3.0))))
+    best_points = None
+    best_gap = None
 
-    # Adjust to hit exactly n_points
-    diff = n_points - points_per_slice.sum()
-    if diff > 0:
-        # Add to slices with most foreground
-        top_slices = np.argsort(-slice_counts)
-        for i in range(diff):
-            points_per_slice[top_slices[i % D]] += 1
-    elif diff < 0:
-        # Remove from slices with most allocated
-        top_slices = np.argsort(-points_per_slice)
-        for i in range(-diff):
-            if points_per_slice[top_slices[i % D]] > 0:
-                points_per_slice[top_slices[i % D]] -= 1
+    z_offsets = sorted({0, step // 2})
+    y_offsets = sorted({0, step // 2})
+    x_offsets = sorted({0, step // 2})
 
-    # Sample from each slice
-    all_points = []
-    for z in range(D):
-        n_z = points_per_slice[z]
-        if n_z == 0:
-            continue
-        yx_coords = np.argwhere(mask[z] > 0)  # (n_fg_z, 2)
-        if len(yx_coords) == 0:
-            continue
-        if len(yx_coords) <= n_z:
-            chosen = yx_coords
-        else:
-            idx = rng.choice(len(yx_coords), n_z, replace=False)
-            chosen = yx_coords[idx]
-        z_col = np.full((len(chosen), 1), z)
-        all_points.append(np.hstack([z_col, chosen]))
+    for z_off in z_offsets:
+        for y_off in y_offsets:
+            for x_off in x_offsets:
+                submask = mask[z_off::step, y_off::step, x_off::step]
+                pts = np.argwhere(submask > 0)
+                if len(pts) == 0:
+                    continue
+                pts = pts.astype(np.int64, copy=False)
+                pts[:, 0] = pts[:, 0] * step + z_off
+                pts[:, 1] = pts[:, 1] * step + y_off
+                pts[:, 2] = pts[:, 2] * step + x_off
+                gap = abs(len(pts) - n_points)
+                if best_gap is None or gap < best_gap:
+                    best_gap = gap
+                    best_points = pts
 
-    points = np.vstack(all_points).astype(np.float64)
-    return points
+    if best_points is None or len(best_points) == 0:
+        idx = rng.choice(total_fg, n_points, replace=False)
+        return coords[idx].astype(np.float64)
+
+    if len(best_points) > n_points:
+        idx = np.linspace(0, len(best_points) - 1, n_points, dtype=int)
+        return best_points[idx].astype(np.float64)
+
+    if len(best_points) < n_points:
+        chosen = best_points
+        chosen_set = {tuple(p) for p in chosen.tolist()}
+        remaining_mask = np.array([tuple(p) not in chosen_set for p in coords], dtype=bool)
+        remaining = coords[remaining_mask]
+        n_extra = min(n_points - len(chosen), len(remaining))
+        if n_extra > 0:
+            extra_idx = rng.choice(len(remaining), n_extra, replace=False)
+            chosen = np.vstack([chosen, remaining[extra_idx]])
+        return chosen.astype(np.float64)
+
+    return best_points.astype(np.float64)
+
+
+def _sample_slice_with_coverage(
+    yx_coords: np.ndarray,
+    n_points: int,
+    rng: np.random.RandomState,
+) -> np.ndarray:
+    """Prefer a regular lattice over pure random picks for better coverage."""
+    if len(yx_coords) <= n_points:
+        return yx_coords
+
+    y_min, x_min = yx_coords.min(axis=0)
+    y_max, x_max = yx_coords.max(axis=0)
+    area = max(len(yx_coords), 1)
+    step = max(1, int(np.sqrt(area / max(n_points, 1))))
+
+    y_mod = (step // 2)
+    x_mod = (step // 2)
+    lattice_mask = (
+        ((yx_coords[:, 0] - y_min) % step == y_mod % step) &
+        ((yx_coords[:, 1] - x_min) % step == x_mod % step)
+    )
+    lattice = yx_coords[lattice_mask]
+
+    if len(lattice) >= n_points:
+        idx = np.linspace(0, len(lattice) - 1, n_points, dtype=int)
+        return lattice[idx]
+
+    remaining_mask = ~lattice_mask
+    remaining = yx_coords[remaining_mask]
+    n_extra = n_points - len(lattice)
+    extra_idx = rng.choice(len(remaining), n_extra, replace=False)
+    return np.vstack([lattice, remaining[extra_idx]])
 
 
 def sample_descriptors_at_points(

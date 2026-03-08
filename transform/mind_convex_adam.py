@@ -162,29 +162,36 @@ def coupled_convex(ssd, ssd_argmin, disp_mesh_t, grid_sp, shape):
 
 
 def inverse_consistency(disp_field1s, disp_field2s, iter=20):
-    """Enforce inverse consistency between forward and backward displacement."""
+    """Enforce inverse consistency between forward and backward displacement.
+    
+    Direct port of the original convex_adam_utils.py implementation.
+    """
     B, C, H, W, D = disp_field1s.size()
     
-    # identity grid
-    grid_sp = 1
-    identity = F.affine_grid(
-        torch.eye(3, 4).unsqueeze(0).to(disp_field1s.device).half(),
-        (B, 1, H, W, D), align_corners=True
-    )
+    with torch.no_grad():
+        disp_field1i = disp_field1s.clone()
+        disp_field2i = disp_field2s.clone()
+        
+        # Identity grid in (1, 3, H, W, D) format — same shape as displacement fields
+        identity = F.affine_grid(
+            torch.eye(3, 4).unsqueeze(0),
+            (1, 1, H, W, D)
+        ).permute(0, 4, 1, 2, 3).to(disp_field1s.device).to(disp_field1s.dtype)
+        
+        for i in range(iter):
+            disp_field1s = disp_field1i.clone()
+            disp_field2s = disp_field2i.clone()
+            
+            disp_field1i = 0.5 * (disp_field1s - F.grid_sample(
+                disp_field2s,
+                (identity + disp_field1s).permute(0, 2, 3, 4, 1),
+            ))
+            disp_field2i = 0.5 * (disp_field2s - F.grid_sample(
+                disp_field1s,
+                (identity + disp_field2s).permute(0, 2, 3, 4, 1),
+            ))
     
-    for i in range(iter):
-        disp_field1i = F.grid_sample(
-            disp_field1s, (identity - disp_field2s.permute(0,2,3,4,1)),
-            align_corners=True, padding_mode='border'
-        )
-        disp_field2i = F.grid_sample(
-            disp_field2s, (identity - disp_field1s.permute(0,2,3,4,1)),
-            align_corners=True, padding_mode='border'
-        )
-        disp_field1s = (disp_field1i - disp_field2i) / 2
-        disp_field2s = (disp_field2i - disp_field1i) / 2
-    
-    return disp_field1s, disp_field2s
+    return disp_field1i, disp_field2i
 
 
 def mind_convex_adam(
@@ -199,6 +206,7 @@ def mind_convex_adam(
     grid_sp_adam: int = 2,
     ic: bool = True,
     device: str = "cuda",
+    proximity_weight: float = 0.25,
 ) -> torch.Tensor:
     """
     Full ConvexAdam registration with MIND-SSC features.
@@ -300,20 +308,31 @@ def mind_convex_adam(
             mode='trilinear', align_corners=False
         )
         
-        net = nn.Sequential(nn.Conv3d(
-            3, 1, (D//grid_sp_adam, H//grid_sp_adam, W//grid_sp_adam), bias=False
-        ))
+        gD_a, gH_a, gW_a = D//grid_sp_adam, H//grid_sp_adam, W//grid_sp_adam
+        
+        net = nn.Sequential(nn.Conv3d(3, 1, (gD_a, gH_a, gW_a), bias=False))
         net[0].weight.data[:] = disp_lr.float().cpu().data / grid_sp_adam
         net.to(device)
         optimizer = torch.optim.Adam(net.parameters(), lr=1)
         
         grid0 = F.affine_grid(
             torch.eye(3, 4).unsqueeze(0).to(device),
-            (1, 1, D//grid_sp_adam, H//grid_sp_adam, W//grid_sp_adam),
+            (1, 1, gD_a, gH_a, gW_a),
             align_corners=False
         )
         
-        # Adam optimization with diffusion regularization
+        with torch.no_grad():
+            disp_init_sample = F.avg_pool3d(
+                F.avg_pool3d(
+                    F.avg_pool3d(net[0].weight.data.clone(), 3, stride=1, padding=1),
+                    3, stride=1, padding=1),
+                3, stride=1, padding=1
+            ).permute(0, 2, 3, 4, 1)
+        
+        scale_adam = torch.tensor(
+            [gD_a / 2, gH_a / 2, gW_a / 2], device=device
+        ).unsqueeze(0)
+        
         for it in range(n_iter_adam):
             optimizer.zero_grad()
             
@@ -330,11 +349,7 @@ def mind_convex_adam(
                 ((disp_sample[0,:,:,1:] - disp_sample[0,:,:,:-1]) ** 2).mean()
             )
             
-            scale_adam = torch.tensor([
-                (D//grid_sp_adam - 1) / 2,
-                (H//grid_sp_adam - 1) / 2,
-                (W//grid_sp_adam - 1) / 2,
-            ], device=device).unsqueeze(0)
+            prox_loss = proximity_weight * (disp_sample - disp_init_sample).pow(2).mean()
             
             grid_disp = grid0.view(-1, 3).float() + (
                 (disp_sample.view(-1, 3)) / scale_adam
@@ -342,18 +357,19 @@ def mind_convex_adam(
             
             patch_mov_sampled = F.grid_sample(
                 patch_features_mov.float(),
-                grid_disp.view(1, D//grid_sp_adam, H//grid_sp_adam, W//grid_sp_adam, 3),
+                grid_disp.view(1, gD_a, gH_a, gW_a, 3),
                 align_corners=False, mode='bilinear'
             )
             
             sampled_cost = (patch_mov_sampled - patch_features_fix).pow(2).mean(1) * 12
             loss = sampled_cost.mean()
-            (loss + reg_loss).backward()
+            (loss + reg_loss + prox_loss).backward()
             optimizer.step()
             
             if (it + 1) % 50 == 0 or it == 0:
                 logger.info(f"  Adam iter {it+1}/{n_iter_adam}: "
-                           f"loss={loss.item():.4f}, reg={reg_loss.item():.4f}")
+                           f"loss={loss.item():.4f}, reg={reg_loss.item():.4f}, "
+                           f"prox={prox_loss.item():.4f}")
         
         fitted_grid = disp_sample.detach().permute(0, 4, 1, 2, 3)
         disp_hr = F.interpolate(
@@ -379,6 +395,8 @@ def convex_adam_on_features(
     grid_sp_adam: int = 2,
     ic: bool = True,
     device: str = "cuda",
+    initial_disp: torch.Tensor = None,
+    proximity_weight: float = 0.25,
 ) -> torch.Tensor:
     """
     ConvexAdam registration on pre-computed feature volumes.
@@ -397,6 +415,8 @@ def convex_adam_on_features(
         grid_sp_adam: Adam grid spacing
         ic: use inverse consistency
         device: torch device
+        initial_disp: (1, 3, D, H, W) optional pre-computed displacement to skip
+                      the convex+IC steps and go straight to Adam refinement.
         
     Returns:
         displacement: (1, 3, D, H, W) displacement field in voxels.
@@ -409,56 +429,58 @@ def convex_adam_on_features(
     features_mov = moving_feats.half().to(device)
     n_ch = features_fix.shape[1]
     
-    logger.info(f"ConvexAdam on features: shape={features_fix.shape}, "
+    logger.info(f"ConvexAdam on features: shape={features_fix.shape}, n_ch={n_ch}, "
                 f"grid_sp={grid_sp}, disp_hw={disp_hw}, adam_iters={n_iter_adam}")
     
-    # Downsample for convex initialization
-    with torch.no_grad():
-        features_fix_smooth = F.avg_pool3d(features_fix, grid_sp, stride=grid_sp)
-        features_mov_smooth = F.avg_pool3d(features_mov, grid_sp, stride=grid_sp)
-    logger.info(f"  Smoothed features: {features_fix_smooth.shape}")
-    
-    # Step 1: Correlation volume
-    ssd, ssd_argmin = correlate(
-        features_fix_smooth, features_mov_smooth,
-        disp_hw, grid_sp, (D, H, W), n_ch
-    )
-    
-    disp_mesh_t = F.affine_grid(
-        disp_hw * torch.eye(3, 4, device=device).half().unsqueeze(0),
-        (1, 1, disp_hw*2+1, disp_hw*2+1, disp_hw*2+1),
-        align_corners=True
-    ).permute(0, 4, 1, 2, 3).reshape(3, -1, 1)
-    
-    # Step 2: Coupled convex optimization
-    disp_soft = coupled_convex(ssd, ssd_argmin, disp_mesh_t, grid_sp, (D, H, W))
-    logger.info(f"  Convex init: max_disp={disp_soft.abs().max().item():.1f}")
-    
-    # Step 3: Inverse consistency
-    if ic:
-        scale = torch.tensor(
-            [D//grid_sp-1, H//grid_sp-1, W//grid_sp-1], device=device
-        ).view(1, 3, 1, 1, 1).half() / 2
+    if initial_disp is not None:
+        disp_hr = initial_disp.half().to(device)
+        logger.info(f"  Using provided initial displacement: "
+                    f"max={disp_hr.abs().max().item():.1f}, "
+                    f"mean={disp_hr.abs().mean().item():.1f}")
+    else:
+        with torch.no_grad():
+            features_fix_smooth = F.avg_pool3d(features_fix, grid_sp, stride=grid_sp)
+            features_mov_smooth = F.avg_pool3d(features_mov, grid_sp, stride=grid_sp)
+        logger.info(f"  Smoothed features: {features_fix_smooth.shape}")
         
-        ssd_, ssd_argmin_ = correlate(
-            features_mov_smooth, features_fix_smooth,
+        ssd, ssd_argmin = correlate(
+            features_fix_smooth, features_mov_smooth,
             disp_hw, grid_sp, (D, H, W), n_ch
         )
-        disp_soft_ = coupled_convex(ssd_, ssd_argmin_, disp_mesh_t, grid_sp, (D, H, W))
-        disp_ice, _ = inverse_consistency(
-            (disp_soft / scale).flip(1),
-            (disp_soft_ / scale).flip(1),
-            iter=15
-        )
-        disp_hr = F.interpolate(
-            disp_ice.flip(1) * scale * grid_sp,
-            size=(D, H, W), mode='trilinear', align_corners=False
-        )
-        logger.info(f"  After IC: max_disp={disp_hr.abs().max().item():.1f}")
-    else:
-        disp_hr = F.interpolate(
-            disp_soft * grid_sp, size=(D, H, W), mode='trilinear', align_corners=False
-        )
+        
+        disp_mesh_t = F.affine_grid(
+            disp_hw * torch.eye(3, 4, device=device).half().unsqueeze(0),
+            (1, 1, disp_hw*2+1, disp_hw*2+1, disp_hw*2+1),
+            align_corners=True
+        ).permute(0, 4, 1, 2, 3).reshape(3, -1, 1)
+        
+        disp_soft = coupled_convex(ssd, ssd_argmin, disp_mesh_t, grid_sp, (D, H, W))
+        logger.info(f"  Convex init: max_disp={disp_soft.abs().max().item():.1f}")
+        
+        if ic:
+            scale = torch.tensor(
+                [D//grid_sp-1, H//grid_sp-1, W//grid_sp-1], device=device
+            ).view(1, 3, 1, 1, 1).half() / 2
+            
+            ssd_, ssd_argmin_ = correlate(
+                features_mov_smooth, features_fix_smooth,
+                disp_hw, grid_sp, (D, H, W), n_ch
+            )
+            disp_soft_ = coupled_convex(ssd_, ssd_argmin_, disp_mesh_t, grid_sp, (D, H, W))
+            disp_ice, _ = inverse_consistency(
+                (disp_soft / scale).flip(1),
+                (disp_soft_ / scale).flip(1),
+                iter=15
+            )
+            disp_hr = F.interpolate(
+                disp_ice.flip(1) * scale * grid_sp,
+                size=(D, H, W), mode='trilinear', align_corners=False
+            )
+            logger.info(f"  After IC: max_disp={disp_hr.abs().max().item():.1f}")
+        else:
+            disp_hr = F.interpolate(
+                disp_soft * grid_sp, size=(D, H, W), mode='trilinear', align_corners=False
+            )
     
     # Step 4: Adam instance optimization
     if lambda_weight > 0:
@@ -482,6 +504,18 @@ def convex_adam_on_features(
             (1, 1, gD, gH, gW), align_corners=False
         )
         
+        with torch.no_grad():
+            disp_init_sample = F.avg_pool3d(
+                F.avg_pool3d(
+                    F.avg_pool3d(net[0].weight.data.clone(), 3, stride=1, padding=1),
+                    3, stride=1, padding=1),
+                3, stride=1, padding=1
+            ).permute(0, 2, 3, 4, 1)
+        
+        scale_adam = torch.tensor(
+            [gD / 2, gH / 2, gW / 2], device=device
+        ).unsqueeze(0)
+        
         for it in range(n_iter_adam):
             optimizer.zero_grad()
             
@@ -498,9 +532,7 @@ def convex_adam_on_features(
                 ((disp_sample[0,:,:,1:] - disp_sample[0,:,:,:-1]) ** 2).mean()
             )
             
-            scale_adam = torch.tensor(
-                [(gD-1)/2, (gH-1)/2, (gW-1)/2], device=device
-            ).unsqueeze(0)
+            prox_loss = proximity_weight * (disp_sample - disp_init_sample).pow(2).mean()
             
             grid_disp = grid0.view(-1, 3).float() + (
                 disp_sample.view(-1, 3) / scale_adam
@@ -512,14 +544,15 @@ def convex_adam_on_features(
                 align_corners=False, mode='bilinear'
             )
             
-            sampled_cost = (patch_mov_sampled - patch_features_fix).pow(2).mean(1) * 12
+            sampled_cost = (patch_mov_sampled - patch_features_fix).pow(2).mean(1) * n_ch
             loss = sampled_cost.mean()
-            (loss + reg_loss).backward()
+            (loss + reg_loss + prox_loss).backward()
             optimizer.step()
             
             if (it + 1) % 50 == 0 or it == 0:
                 logger.info(f"  Adam iter {it+1}/{n_iter_adam}: "
-                           f"loss={loss.item():.4f}, reg={reg_loss.item():.4f}")
+                           f"loss={loss.item():.4f}, reg={reg_loss.item():.4f}, "
+                           f"prox={prox_loss.item():.4f}")
         
         fitted_grid = disp_sample.detach().permute(0, 4, 1, 2, 3)
         disp_hr = F.interpolate(

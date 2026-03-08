@@ -1,0 +1,136 @@
+stage8 suite log: /u/almik/feb25/pipeline/tests/results/stage8_suite/logs/stage8_suite_20260307_191600.log
+pair=0 device=cuda downsample=2 batch_size=4 n_points=4000
+
+================================================================================
+RUNNING: test_8_coordinate_sampling_audit
+COMMAND: python3 -m pipeline.tests.test_8_coordinate_sampling_audit --pair 0 --feature all --device cuda --downsample 2 --batch-size 4
+================================================================================
+2026-03-07 19:16:02,972 INFO: Logging to /viper/u2/almik/feb25/pipeline/tests/results/test_8_coordinate_sampling/logs/test_8_coordinate_sampling_20260307_191602.log
+2026-03-07 19:16:02,978 INFO: synthetic sampling: mean_abs_err=0.000000, max_abs_err=0.000001
+Traceback (most recent call last):
+  File "/usr/lib64/python3.9/runpy.py", line 197, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/usr/lib64/python3.9/runpy.py", line 87, in _run_code
+    exec(code, run_globals)
+  File "/viper/u2/almik/feb25/pipeline/tests/test_8_coordinate_sampling_audit.py", line 237, in <module>
+    main()
+  File "/viper/u2/almik/feb25/pipeline/tests/test_8_coordinate_sampling_audit.py", line 217, in main
+    results[feature] = backend_identity_audit(
+  File "/viper/u2/almik/feb25/pipeline/tests/test_8_coordinate_sampling_audit.py", line 87, in backend_identity_audit
+    backend = create_backend(config, feature, config.device, downsample, batch_size)
+  File "/viper/u2/almik/feb25/pipeline/tests/_stage8_common.py", line 53, in create_backend
+    extractor = DINOv3Extractor(
+  File "/viper/u2/almik/feb25/pipeline/features/dinov3_extractor.py", line 189, in __init__
+    self.model.to(device)
+  File "/u/almik/.local/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1340, in to
+    return self._apply(convert)
+  File "/u/almik/.local/lib/python3.9/site-packages/torch/nn/modules/module.py", line 900, in _apply
+    module._apply(fn)
+  File "/u/almik/.local/lib/python3.9/site-packages/torch/nn/modules/module.py", line 900, in _apply
+    module._apply(fn)
+  File "/u/almik/.local/lib/python3.9/site-packages/torch/nn/modules/module.py", line 927, in _apply
+    param_applied = fn(param)
+  File "/u/almik/.local/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1326, in convert
+    return t.to(
+  File "/u/almik/.local/lib/python3.9/site-packages/torch/cuda/__init__.py", line 319, in _lazy_init
+    torch._C._cuda_init()
+RuntimeError: No HIP GPUs are available
+RESULT: FAIL(1) - test_8_coordinate_sampling_audit
+
+================================================================================
+RUNNING: test_9_backend_feature_audit
+COMMAND: python3 -m pipeline.tests.test_9_backend_feature_audit --pair 0 --feature all --device cuda --downsample 2 --batch-size 4 --n-points 4000
+================================================================================
+2026-03-07 19:16:32,394 INFO: Logging to /viper/u2/almik/feb25/pipeline/tests/results/test_9_backend_feature_audit/logs/test_9_backend_feature_audit_20260307_191632.log
+Traceback (most recent call last):
+  File "/usr/lib64/python3.9/runpy.py", line 197, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/usr/lib64/python3.9/runpy.py", line 87, in _run_code
+    exec(code, run_globals)
+  File "/viper/u2/almik/feb25/pipeline/tests/test_9_backend_feature_audit.py", line 175, in <module>
+    main()
+  File "/viper/u2/almik/feb25/pipeline/tests/test_9_backend_feature_audit.py", line 130, in main
+    synthetic_case = create_synthetic_case(
+  File "/viper/u2/almik/feb25/pipeline/tests/_stage8_common.py", line 235, in create_synthetic_case
+    v_coarse = torch.randn(1, 3, 8, 8, 8, device=device) * 3.0
+  File "/u/almik/.local/lib/python3.9/site-packages/torch/cuda/__init__.py", line 319, in _lazy_init
+    torch._C._cuda_init()
+RuntimeError: No HIP GPUs are available
+RESULT: FAIL(1) - test_9_backend_feature_audit
+
+================================================================================
+RUNNING: test_10_backend_matching_audit
+COMMAND: python3 -m pipeline.tests.test_10_backend_matching_audit --pair 0 --feature all --device cuda --downsample 2 --batch-size 4
+================================================================================
+2026-03-07 19:16:36,589 INFO: Logging to /viper/u2/almik/feb25/pipeline/tests/results/test_10_backend_matching_audit/logs/test_10_backend_matching_audit_20260307_191636.log
+Traceback (most recent call last):
+  File "/usr/lib64/python3.9/runpy.py", line 197, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/usr/lib64/python3.9/runpy.py", line 87, in _run_code
+    exec(code, run_globals)
+  File "/viper/u2/almik/feb25/pipeline/tests/test_10_backend_matching_audit.py", line 219, in <module>
+    main()
+  File "/viper/u2/almik/feb25/pipeline/tests/test_10_backend_matching_audit.py", line 176, in main
+    synthetic_case = create_synthetic_case(
+  File "/viper/u2/almik/feb25/pipeline/tests/_stage8_common.py", line 235, in create_synthetic_case
+    v_coarse = torch.randn(1, 3, 8, 8, 8, device=device) * 3.0
+  File "/u/almik/.local/lib/python3.9/site-packages/torch/cuda/__init__.py", line 319, in _lazy_init
+    torch._C._cuda_init()
+RuntimeError: No HIP GPUs are available
+RESULT: FAIL(1) - test_10_backend_matching_audit
+
+================================================================================
+RUNNING: test_11_mind_baseline_audit
+COMMAND: python3 -m pipeline.tests.test_11_mind_baseline_audit --pair 0 --device cuda
+================================================================================
+2026-03-07 19:16:40,688 INFO: Logging to /viper/u2/almik/feb25/pipeline/tests/results/test_11_mind_baseline_audit/logs/test_11_mind_baseline_audit_20260307_191640.log
+Traceback (most recent call last):
+  File "/usr/lib64/python3.9/runpy.py", line 197, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/usr/lib64/python3.9/runpy.py", line 87, in _run_code
+    exec(code, run_globals)
+  File "/viper/u2/almik/feb25/pipeline/tests/test_11_mind_baseline_audit.py", line 229, in <module>
+    main()
+  File "/viper/u2/almik/feb25/pipeline/tests/test_11_mind_baseline_audit.py", line 182, in main
+    real = run_case(
+  File "/viper/u2/almik/feb25/pipeline/tests/test_11_mind_baseline_audit.py", line 79, in run_case
+    disp_ours = mind_convex_adam(
+  File "/viper/u2/almik/feb25/pipeline/transform/mind_convex_adam.py", line 239, in mind_convex_adam
+    img_fixed = torch.from_numpy(fixed_img).float().unsqueeze(0).unsqueeze(0).to(device)
+  File "/u/almik/.local/lib/python3.9/site-packages/torch/cuda/__init__.py", line 319, in _lazy_init
+    torch._C._cuda_init()
+RuntimeError: No HIP GPUs are available
+RESULT: FAIL(1) - test_11_mind_baseline_audit
+
+================================================================================
+RUNNING: test_12_fitter_stress_audit
+COMMAND: python3 -m pipeline.tests.test_12_fitter_stress_audit --pair 0 --device cuda
+================================================================================
+2026-03-07 19:16:44,849 INFO: Logging to /viper/u2/almik/feb25/pipeline/tests/results/test_12_fitter_stress_audit/logs/test_12_fitter_stress_audit_20260307_191644.log
+2026-03-07 19:16:46,013 INFO: initial_tre=10.264
+2026-03-07 19:16:46,016 INFO: ================================================================================
+2026-03-07 19:16:46,016 INFO: SCENARIO perfect_all n=30896
+2026-03-07 19:16:46,016 INFO: ================================================================================
+Traceback (most recent call last):
+  File "/usr/lib64/python3.9/runpy.py", line 197, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/usr/lib64/python3.9/runpy.py", line 87, in _run_code
+    exec(code, run_globals)
+  File "/viper/u2/almik/feb25/pipeline/tests/test_12_fitter_stress_audit.py", line 191, in <module>
+    main()
+  File "/viper/u2/almik/feb25/pipeline/tests/test_12_fitter_stress_audit.py", line 153, in main
+    displacement, runtime_s = run_fitter(volume_shape, src, tgt, weights, args.device)
+  File "/viper/u2/almik/feb25/pipeline/tests/test_12_fitter_stress_audit.py", line 30, in run_fitter
+    disp = fitter.fit(src, tgt, weights)
+  File "/viper/u2/almik/feb25/pipeline/transform/fitter.py", line 78, in fit
+    src_pts = torch.from_numpy(matched_src).float().to(self.device)
+  File "/u/almik/.local/lib/python3.9/site-packages/torch/cuda/__init__.py", line 319, in _lazy_init
+    torch._C._cuda_init()
+RuntimeError: No HIP GPUs are available
+RESULT: FAIL(1) - test_12_fitter_stress_audit
+
+================================================================================
+STAGE8 SUITE SUMMARY
+TOTAL=5 FAILED=5 PASSED=0
+LOG=/u/almik/feb25/pipeline/tests/results/stage8_suite/logs/stage8_suite_20260307_191600.log
+================================================================================

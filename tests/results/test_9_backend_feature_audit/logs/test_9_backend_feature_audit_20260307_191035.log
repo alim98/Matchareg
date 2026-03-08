@@ -1,0 +1,16 @@
+2026-03-07 19:10:35,432 INFO: Logging to /viper/u2/almik/feb25/pipeline/tests/results/test_9_backend_feature_audit/logs/test_9_backend_feature_audit_20260307_191035.log
+2026-03-07 19:11:56,687 INFO: ================================================================================
+2026-03-07 19:11:56,688 INFO: BACKEND mind
+2026-03-07 19:11:56,688 INFO: ================================================================================
+2026-03-07 19:11:56,690 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_mind_real_fixed_ds2.npz
+2026-03-07 19:11:59,091 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0000_mind_real_moving_ds2.npz
+2026-03-07 19:12:03,089 INFO: real: pos=0.773 neg=0.744 sep=0.028 nn@1=1.0%
+2026-03-07 19:12:03,093 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_fixed_mind_synthetic_fixed_ds2.npz
+2026-03-07 19:12:05,668 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_synthetic_moving_mind_synthetic_moving_ds2.npz
+2026-03-07 19:12:08,893 INFO: synthetic: pos=0.781 neg=0.758 sep=0.023 nn@1=2.0%
+2026-03-07 19:12:10,156 INFO: labels: feature path broken even on synthetic, weak feature separation on real data
+2026-03-07 19:12:10,231 INFO: ================================================================================
+2026-03-07 19:12:10,232 INFO: SUMMARY
+2026-03-07 19:12:10,232 INFO: ================================================================================
+2026-03-07 19:12:10,232 INFO: mind: real nn@1=1.0% synthetic nn@1=2.0% real sep=0.028 synthetic sep=0.023
+2026-03-07 19:12:10,232 INFO:   labels: feature path broken even on synthetic, weak feature separation on real data

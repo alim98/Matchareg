@@ -1,3 +1,4 @@
+salloc -A mhf_apu -p apu --gres=gpu:1 --time=04:00:00
 (base) almik@raven03:/nexus/posix0/MBR-neuralsystems/alim> pwd
 /nexus/posix0/MBR-neuralsystems/alim
 (base) almik@raven03:/nexus/posix0/MBR-neuralsystems/alim> cd /nexus/posix

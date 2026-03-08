@@ -118,10 +118,41 @@ class TestPreprocessing:
         assert all_rgb.shape == (10, 3, 12, 14)
 
     def test_rescale_to_model_range(self):
-        slices = np.random.randn(5, 3, 32, 32).astype(np.float32)
+        # Input: z-scored slices (mean≈0, std≈1)
+        rng = np.random.RandomState(0)
+        slices = rng.randn(5, 3, 32, 32).astype(np.float32)
         rescaled = rescale_to_model_range(slices)
-        # Check approximate mean per channel
+
         assert rescaled.shape == slices.shape
+        assert rescaled.dtype == np.float32
+        assert np.isfinite(rescaled).all(), "rescale_to_model_range produced NaN/Inf"
+
+        # After clipping to ±3σ, scaling to [0,1], then ImageNet normalisation:
+        # ImageNet mean ≈ [0.485, 0.456, 0.406], std ≈ [0.229, 0.224, 0.225].
+        # The midpoint of the [0,1] range (z-score=0) maps to ≈ (0.5-mean)/std:
+        #   channel 0: (0.5 - 0.485) / 0.229 ≈  0.065
+        #   channel 1: (0.5 - 0.456) / 0.224 ≈  0.196
+        #   channel 2: (0.5 - 0.406) / 0.225 ≈  0.418
+        # So values around the median of the input should land near these numbers.
+        for c in range(3):
+            ch_median = float(np.median(rescaled[:, c]))
+            assert abs(ch_median) < 3.0, (
+                f"Channel {c} median {ch_median:.3f} is far from expected range "
+                "(should be within ±3 after ImageNet normalisation)"
+            )
+
+    def test_rescale_known_midpoint(self):
+        """z-score = 0 should map to (0.5 - ImageNet_mean) / ImageNet_std per channel."""
+        slices = np.zeros((1, 3, 4, 4), dtype=np.float32)  # all zeros (z-score=0)
+        rescaled = rescale_to_model_range(slices, clip_sigma=3.0,
+                                          target_mean=(0.485, 0.456, 0.406),
+                                          target_std=(0.229, 0.224, 0.225))
+        expected = [(0.5 - 0.485) / 0.229,
+                    (0.5 - 0.456) / 0.224,
+                    (0.5 - 0.406) / 0.225]
+        for c in range(3):
+            np.testing.assert_allclose(rescaled[0, c, 0, 0], expected[c], atol=1e-4,
+                                       err_msg=f"Channel {c} midpoint mismatch")
 
 
 if __name__ == "__main__":

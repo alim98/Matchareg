@@ -48,10 +48,21 @@ class TestSampling:
         assert desc.shape == (2, 64)
 
     def test_include_keypoints(self):
-        pts = np.random.rand(50, 3) * 30
-        kps = np.random.rand(10, 3) * 30
+        # Use a large coordinate range to make integer-rounding collisions negligible
+        # (60 points in [0,1000)^3 integer grid → P(any collision) << 1e-6)
+        rng = np.random.RandomState(42)
+        pts = rng.rand(50, 3) * 1000.0
+        kps = rng.rand(10, 3) * 1000.0
         combined = include_keypoints(pts, kps)
         assert len(combined) == 60
+
+    def test_include_keypoints_deduplication(self):
+        """Duplicate integer coordinates should be removed."""
+        # pts and kps share the same point → should deduplicate to 1 not 2
+        pts = np.array([[5.1, 5.2, 5.0]], dtype=np.float64)   # rounds to [5,5,5]
+        kps = np.array([[5.0, 5.1, 5.4]], dtype=np.float64)   # rounds to [5,5,5]
+        combined = include_keypoints(pts, kps)
+        assert len(combined) == 1
 
 
 class TestMatching:
@@ -95,6 +106,31 @@ class TestMatching:
         # All matches should be self-matches
         for s, t in zip(result["matches_src_idx"], result["matches_tgt_idx"]):
             assert s == t
+
+    def test_nn_matching_margin_filter(self):
+        desc_src = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float64)
+        desc_tgt = np.array(
+            [
+                [1.0, 0.0],
+                [0.99995, 0.01],
+                [0.0, 1.0],
+            ],
+            dtype=np.float64,
+        )
+        desc_tgt /= np.linalg.norm(desc_tgt, axis=1, keepdims=True)
+        pts_src = np.array([[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]], dtype=np.float64)
+        pts_tgt = np.array([[0.0, 0.0, 0.0], [0.2, 0.0, 0.0], [10.0, 0.0, 0.0]], dtype=np.float64)
+
+        result = nn_matching(
+            desc_src,
+            desc_tgt,
+            pts_src,
+            pts_tgt,
+            margin_threshold=0.01,
+            max_displacement=5.0,
+        )
+        assert list(result["matches_src_idx"]) == [1]
+        assert list(result["matches_tgt_idx"]) == [2]
 
     def test_nn_dispatch(self):
         d1 = np.random.randn(20, 32).astype(np.float64)

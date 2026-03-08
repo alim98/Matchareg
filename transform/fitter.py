@@ -30,9 +30,9 @@ class DiffeomorphicFitter:
         self,
         volume_shape: tuple,
         grid_spacings: List[float] = [10.0, 6.0, 3.0],
-        lambda_smooth: float = 2.0,
-        lambda_jac: float = 10.0,
-        lr: float = 1e-3,
+        lambda_smooth: float = 1.0,  
+        lambda_jac: float = 0.1,
+        lr: float = 0.1,  # Adam step bounds max velocity change; needs to be large enough to reach 40+ voxels
         n_iters_per_level: int = 200,
         n_squaring_steps: int = 7,
         device: str = "cuda",
@@ -149,19 +149,21 @@ class DiffeomorphicFitter:
             v = svf.get_velocity_field()
             disp = scaling_and_squaring(v, self.n_squaring_steps)
 
-            # Correspondence loss: weighted Huber loss (robust to outlier matches)
+            # Correspondence loss: Geman-McClure robust loss
             warped = self._warp_points_differentiable(src_pts, disp)
             residuals = torch.norm(warped - tgt_pts, dim=1)  # per-point distance
-            # Huber loss: prevents extreme outliers from ripping the vector field
-            # Delta tuned to target mean correspondence error
-            delta = 50.0  # voxels — transition point (increased to allow physical momentum for 20-30 voxel gaps)
-            huber = torch.where(
-                residuals < delta,
-                0.5 * residuals ** 2,
-                delta * (residuals - 0.5 * delta),
-            )
-            # Normalize by total points to make lambda tuning resolution-invariant
-            loss_corr = (weights * huber).sum()
+            
+            # Key insight: the scale parameter 'c' defines where the loss flattens out.
+            # If c is too large, the loss acts like L2/Huber and outliers pull the field.
+            # If c is too small, everything looks like an outlier and gradients vanish.
+            # We tie it to grid_spacing: coarse grid (10mm) handles gross alignments (10-20mm noise),
+            # fine grid (3mm) tightens to highly certain matches (3-5mm noise).
+            c = grid_spacing  
+            
+            # Geman-McClure: (r^2/2) / (1 + (r/c)^2)
+            robust_loss = 0.5 * (residuals ** 2) / (1.0 + (residuals / c) ** 2)
+            
+            loss_corr = (weights * robust_loss).sum()
 
             # Smoothness regularization
             loss_smooth = svf.regularization_loss()
@@ -256,4 +258,6 @@ class DiffeomorphicFitter:
     ) -> torch.Tensor:
         """Compose two displacement fields."""
         from .integrate import compose_displacements
-        return compose_displacements(disp1, disp2)
+        # compose_displacements(A, B) = B + A(x + B)
+        # We want disp1 + disp2(x + disp1), so pass (disp2, disp1)
+        return compose_displacements(disp2, disp1)

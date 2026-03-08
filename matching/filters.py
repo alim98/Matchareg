@@ -75,6 +75,60 @@ def filter_matches(
                 mask_tgt[z, y, x] == 0):
                 valid[i] = False
 
+    # --------------------------------------------------------------------------
+    # FAST SPATIAL RANSAC / LOCAL CONSENSUS FILTER
+    # --------------------------------------------------------------------------
+    # Many matches are completely random outliers (e.g. 70%). These random matches
+    # point in entirely random directions. True matches are locally coherent.
+    # For each match, we check its K nearest spatial neighbors. If its displacement
+    # vector is wildly different from the median displacement of its neighbors, it's an outlier.
+
+    # Only run consensus filter if we have enough points to build a meaningful neighborhood
+    MIN_POINTS_FOR_CONSENSUS = 100
+    if valid.sum() > MIN_POINTS_FOR_CONSENSUS:
+        from scipy.spatial import cKDTree
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # Get the current valid geometry points and their displacements
+        # Use geometry points to measure distance since they represent the "current" state
+        valid_src_geom = pts_src_for_filter[src_idx[valid]]
+        valid_tgt = points_tgt[tgt_idx[valid]]
+        
+        # Calculate displacement vectors for all valid matches
+        disp_vectors = valid_tgt - valid_src_geom  # (V, 3) where V is sum(valid)
+        
+        # Build KD-tree on the source geometry to find local spatial neighborhoods
+        tree = cKDTree(valid_src_geom)
+        
+        # Find 15 nearest neighbors for each point (including itself)
+        k_neighbors = min(15, len(valid_src_geom))
+        _, neighbor_indices = tree.query(valid_src_geom, k=k_neighbors)  # (V, K)
+        
+        # For each point, get the displacement vectors of its K neighbors
+        # neighbor_indices has shape (V, K) -> gather from disp_vectors (V, 3) 
+        # Result: (V, K, 3)
+        neighbor_disps = disp_vectors[neighbor_indices]
+        
+        # Calculate the median displacement vector in each neighborhood
+        median_neighbor_disps = np.median(neighbor_disps, axis=1)  # (V, 3)
+        
+        # Calculate deviation of each point's displacement from its neighborhood's median
+        deviations = np.linalg.norm(disp_vectors - median_neighbor_disps, axis=1)  # (V,)
+        
+        # A match is locally consistent if its deviation is small (e.g., < 15mm)
+        CONSENSUS_THRESHOLD = 15.0  # mm
+        consensus_valid = deviations < CONSENSUS_THRESHOLD
+        
+        logger.info(f"  Local consensus filter: kept {consensus_valid.sum()}/{len(valid_src_geom)} "
+                    f"matches (threshold={CONSENSUS_THRESHOLD}mm deviation)")
+        
+        # Update the master valid mask
+        # We need to map the boolean array of size V back to the original array of size N
+        valid_indices = np.where(valid)[0]
+        consensus_invalid_indices = valid_indices[~consensus_valid]
+        valid[consensus_invalid_indices] = False
+
     return {
         "matched_points_src": points_src[src_idx[valid]],   # original (unwarped) coords
         "matched_points_tgt": points_tgt[tgt_idx[valid]],

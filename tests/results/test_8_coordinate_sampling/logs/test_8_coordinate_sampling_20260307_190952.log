@@ -1,0 +1,7 @@
+2026-03-07 19:09:52,673 INFO: Logging to /viper/u2/almik/feb25/pipeline/tests/results/test_8_coordinate_sampling/logs/test_8_coordinate_sampling_20260307_190952.log
+2026-03-07 19:09:52,733 INFO: synthetic sampling: mean_abs_err=0.000000, max_abs_err=0.000001
+2026-03-07 19:10:22,981 INFO: mind: identity nn@1=91.7% same_mean=1.000 shifted_mean=0.860 mapping_max_err=0.000000
+2026-03-07 19:10:25,311 INFO: ================================================================================
+2026-03-07 19:10:25,311 INFO: SUMMARY
+2026-03-07 19:10:25,311 INFO: ================================================================================
+2026-03-07 19:10:25,311 INFO: mind: nn@1=91.7% same=1.000 shifted=0.860 mapping_err=0.000000

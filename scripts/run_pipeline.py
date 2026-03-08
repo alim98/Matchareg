@@ -12,10 +12,11 @@ Implements the full pipeline from plan.md:
   Stage 6: Evaluation (TRE, Jacobian stats)
 
 Usage:
-    python -m pipeline.scripts.run_pipeline --pair 0 --feature dinov3 --matcher gwot
-    python -m pipeline.scripts.run_pipeline --split val --feature dinov3 --matcher nn
+    python -m pipeline.scripts.run_pipeline --pair 0 --feature matcha --matcher nn
+    python -m pipeline.scripts.run_pipeline --split val --feature matcha --matcher nn
 """
 import argparse
+import functools
 import logging
 import sys
 import time
@@ -127,6 +128,9 @@ def create_feature_extractor(config: PipelineConfig):
             weights_path=str(config.paths.matcha_weights),
             device=config.device,
         )
+    elif config.features.backend == "mind":
+        from pipeline.features.mind_extractor import MINDExtractor
+        return MINDExtractor(device=config.device)
     else:
         raise ValueError(f"Unknown backend: {config.features.backend}")
 
@@ -214,6 +218,12 @@ def get_features(
     if mask is None:
         logger.info("  No dataset mask available — generating via thresholding (fallback)")
         mask = generate_trunk_mask(volume)
+
+    if hasattr(fuser, "extract_volume_features"):
+        result = fuser.extract_volume_features(volume.astype(np.float32))
+        if config.features.use_cache:
+            save_features(result, cache_path)
+        return result
 
     vol_norm = robust_intensity_normalize(volume, mask=mask)
 
@@ -339,12 +349,20 @@ def run_matching_stage(
     )
 
     # If we have a current displacement, warp moving points to align
-    # with fixed space for better matching (GWOT↔fit alternation)
+    # with fixed space for better matching (GWOT↔fit alternation).
+    # BUG NOTE: The displacement field maps fixed→moving, i.e. d(x_fixed)
+    # tells us where a fixed-space point goes in moving space.  To bring
+    # moving points INTO fixed space we need the INVERSE field, which we
+    # don't have.  Applying the forward field to moving-space coordinates
+    # samples it at the wrong locations and produces garbage.
+    # Until a proper inverse is implemented, skip the warping step.
     if displacement is not None:
-        warped_moving_pts = warp_points(moving_voxel_pts, displacement)
-        logger.info(f"  [{stage_name}] Warped moving points with current displacement")
-    else:
-        warped_moving_pts = moving_voxel_pts
+        logger.warning(
+            f"  [{stage_name}] Outer-iter warping skipped: forward displacement "
+            "cannot be applied to moving-space points (inverse field not available). "
+            "Matching will use original moving coordinates."
+        )
+    warped_moving_pts = moving_voxel_pts
 
     if viz is not None:
         viz.sampled_points(fixed_img, moving_img, fixed_voxel_pts, warped_moving_pts, stage_name)
@@ -375,6 +393,11 @@ def run_matching_stage(
             "lambda_mass":  config.gwot.lambda_mass,
             "max_iter":     config.gwot.max_iter,
         }
+    elif config.matcher.method == "nn":
+        match_kwargs = {
+            "max_displacement": config.sampling.max_displacement,
+            "margin_threshold": config.matcher.nn_margin_threshold,
+        }
 
 
     match_result = match(
@@ -398,22 +421,74 @@ def run_matching_stage(
         confidence_threshold=config.gwot.confidence_threshold,
         mask_src=moving_mask,
         mask_tgt=fixed_mask,
-        max_displacement=150.0,  # reject physically implausible matches
+        max_displacement=config.sampling.max_displacement,  # reject physically implausible matches
         points_src_geom=warped_moving_pts,  # geometry used during matching
     )
     
     logger.info(f"  [{stage_name}] Matches: {filtered['n_matches']} / {filtered['n_before_filter']}")
+    filtered["match_distance_mean"] = None
+    filtered["match_distance_median"] = None
+    filtered["match_distance_std"] = None
+    filtered["match_coverage"] = filtered["n_matches"] / max(n_points, 1)
+    filtered["match_support_volume_frac"] = None
+    filtered["match_axis_spread_frac"] = None
+    filtered["match_keep_ratio"] = filtered["n_matches"] / max(filtered["n_before_filter"], 1)
+    filtered["match_weight_mean"] = None
     if filtered['n_matches'] > 0:
         filt_src = filtered["matched_points_src"]
         filt_tgt = filtered["matched_points_tgt"]
         filt_dist = np.linalg.norm(filt_src - filt_tgt, axis=1)
+        filtered["match_distance_mean"] = float(filt_dist.mean())
+        filtered["match_distance_median"] = float(np.median(filt_dist))
+        filtered["match_distance_std"] = float(filt_dist.std())
+        filtered["match_weight_mean"] = float(filtered["weights"].mean())
+        q_lo = np.percentile(filt_tgt, 5, axis=0)
+        q_hi = np.percentile(filt_tgt, 95, axis=0)
+        spread = np.maximum(q_hi - q_lo, 0.0)
+        spread_frac = spread / np.array(fixed_orig_shape, dtype=np.float64)
+        filtered["match_axis_spread_frac"] = spread_frac.tolist()
+        filtered["match_support_volume_frac"] = float(np.prod(np.clip(spread_frac, 0.0, 1.0)))
         logger.info(f"  [{stage_name}] Match distances (filtered): min={filt_dist.min():.2f}, max={filt_dist.max():.2f}, mean={filt_dist.mean():.2f}, std={filt_dist.std():.2f}")
+        logger.info(
+            f"  [{stage_name}] Match support: axis_spread_frac="
+            f"({spread_frac[0]:.3f}, {spread_frac[1]:.3f}, {spread_frac[2]:.3f}), "
+            f"volume_frac={filtered['match_support_volume_frac']:.4f}"
+        )
     
     if filtered["n_matches"] < 10:
         logger.warning(f"  [{stage_name}] Too few matches ({filtered['n_matches']})")
         return None
 
     return filtered
+
+
+def _sparse_matches_are_trustworthy(match_result: dict, n_points: int) -> bool:
+    n_matches = match_result.get("n_matches", 0)
+    coverage = n_matches / max(n_points, 1)
+    support_volume_frac = match_result.get("match_support_volume_frac")
+    spread_frac = match_result.get("match_axis_spread_frac")
+    keep_ratio = match_result.get("match_keep_ratio")
+    weight_mean = match_result.get("match_weight_mean")
+
+    if n_matches < max(180, int(0.025 * n_points)):
+        return False
+    if coverage < 0.03:
+        return False
+    if keep_ratio is None or keep_ratio < 0.55:
+        return False
+    if weight_mean is None or weight_mean < 0.35:
+        return False
+    if support_volume_frac is None or support_volume_frac < 0.03:
+        return False
+    if spread_frac is None:
+        return False
+    if spread_frac[0] < 0.18:
+        return False
+    if spread_frac[1] < 0.12:
+        return False
+    if spread_frac[2] < 0.12:
+        return False
+    return True
 
 
 @log_and_validate
@@ -452,6 +527,8 @@ def run_pair(
 
     # ThoraxCBCT does not provide pre-segmented trunk masks — generate them
     # via Hounsfield-unit thresholding + morphology.
+    D, H, W = fixed_img.shape
+
     fixed_mask  = generate_trunk_mask(fixed_img)
     moving_mask = generate_trunk_mask(moving_img)
 
@@ -482,20 +559,212 @@ def run_pair(
             moving_img=moving_img,
             mind_r=1,
             mind_d=2,
-            lambda_weight=0,     # Adam disabled: makes TRE worse in all grid_sp sweep results
-            grid_sp=4,           # Best from test_grid_sp.py sweep (9.772mm convex-only)
+            lambda_weight=1.25,
+            grid_sp=4,
+            disp_hw=4,
+            n_iter_adam=300,
+            grid_sp_adam=2,
+            ic=True,
+            device=config.device,
+            proximity_weight=0.25,
+        )
+        total_matches = 0  # MIND doesn't produce discrete matches
+        match_result = None
+
+    elif method == "feature_convex":
+        # =============================================================
+        # Foundation features + ConvexAdam (DINO-Reg style dense local matching)
+        # =============================================================
+        assert fuser is not None, "Feature extractor required for feature_convex method"
+        logger.info(f"\nMethod: {config.features.backend} + ConvexAdam")
+
+        logger.info("Stage 1: Feature extraction...")
+        fixed_result  = get_features(config, fixed_img,  data["fixed_id"],  fuser, mask=fixed_mask)
+        moving_result = get_features(config, moving_img, data["moving_id"], fuser, mask=moving_mask)
+        fixed_feats, fixed_feat_shape, fixed_orig_shape = fixed_result
+        moving_feats, moving_feat_shape, moving_orig_shape = moving_result
+
+        logger.info(f"Feature Map stats [Fixed]:  min={fixed_feats.min():.3f}, max={fixed_feats.max():.3f}, mean={fixed_feats.mean():.3f}, std={fixed_feats.std():.3f}")
+        logger.info(f"Feature Map stats [Moving]: min={moving_feats.min():.3f}, max={moving_feats.max():.3f}, mean={moving_feats.mean():.3f}, std={moving_feats.std():.3f}")
+
+        viz.features(fixed_feats.transpose(1, 2, 3, 0),
+                     moving_feats.transpose(1, 2, 3, 0))
+
+        logger.info("Stage 2: PCA reduction + upsample to volume resolution...")
+        from sklearn.decomposition import PCA
+        import gc
+
+        n_pca = 16
+        C = fixed_feats.shape[0]
+        logger.info(f"  Feature channels: {C}, spatial: {fixed_feat_shape}")
+
+        flat_fix = fixed_feats.reshape(C, -1).T
+        flat_mov = moving_feats.reshape(C, -1).T
+
+        rng_pca = np.random.RandomState(42)
+        n_sub = min(50000, flat_fix.shape[0])
+        fit_data = np.vstack([
+            flat_fix[rng_pca.choice(len(flat_fix), n_sub, replace=False)],
+            flat_mov[rng_pca.choice(len(flat_mov), n_sub, replace=False)],
+        ])
+
+        pca = PCA(n_components=n_pca)
+        pca.fit(fit_data)
+        del fit_data
+        logger.info(f"  PCA: {C} -> {n_pca} channels, variance explained: "
+                    f"{pca.explained_variance_ratio_.sum():.3f}")
+
+        pca_fix = pca.transform(flat_fix).T.reshape(n_pca, *fixed_feat_shape)
+        del flat_fix
+        pca_mov = pca.transform(flat_mov).T.reshape(n_pca, *moving_feat_shape)
+        del flat_mov, fixed_feats, moving_feats, pca
+        gc.collect()
+
+        pca_fix_t = torch.from_numpy(pca_fix).unsqueeze(0).float()
+        del pca_fix
+        pca_mov_t = torch.from_numpy(pca_mov).unsqueeze(0).float()
+        del pca_mov
+        pca_fix_full = F.interpolate(pca_fix_t, size=(D, H, W), mode='trilinear', align_corners=False)
+        del pca_fix_t
+        pca_mov_full = F.interpolate(pca_mov_t, size=(D, H, W), mode='trilinear', align_corners=False)
+        del pca_mov_t
+        gc.collect()
+
+        pca_fix_full /= (pca_fix_full.norm(dim=1, keepdim=True) + 1e-6)
+        pca_mov_full /= (pca_mov_full.norm(dim=1, keepdim=True) + 1e-6)
+
+        logger.info(f"  Upsampled features: {pca_fix_full.shape}")
+
+        logger.info("Stage 3: ConvexAdam on foundation features...")
+        from pipeline.transform.mind_convex_adam import convex_adam_on_features
+
+        displacement = convex_adam_on_features(
+            fixed_feats=pca_fix_full,
+            moving_feats=pca_mov_full,
+            volume_shape=(D, H, W),
+            grid_sp=4,
+            disp_hw=4,
+            lambda_weight=1.25,
+            n_iter_adam=300,
+            grid_sp_adam=2,
+            ic=True,
+            device=config.device,
+        )
+
+        del pca_fix_full, pca_mov_full
+        total_matches = 0
+        match_result = None
+
+    elif method == "hybrid":
+        # =============================================================
+        # MIND convex init + Foundation feature Adam refinement
+        # MIND provides voxel-level spatial discrimination for gross
+        # alignment; foundation features provide semantic discrimination
+        # for fine-tuning via Adam optimization.
+        # =============================================================
+        assert fuser is not None, "Feature extractor required for hybrid method"
+        logger.info(f"\nMethod: MIND convex + {config.features.backend} Adam")
+
+        logger.info("Stage 1: MIND ConvexAdam (convex only, no Adam)...")
+        from pipeline.transform.mind_convex_adam import mind_convex_adam, convex_adam_on_features
+
+        displacement_mind = mind_convex_adam(
+            fixed_img=fixed_img,
+            moving_img=moving_img,
+            mind_r=1,
+            mind_d=2,
+            lambda_weight=0,
+            grid_sp=4,
             disp_hw=4,
             n_iter_adam=0,
             grid_sp_adam=2,
             ic=True,
             device=config.device,
         )
+        logger.info(f"  MIND displacement: max={displacement_mind.abs().max().item():.1f}, "
+                    f"mean={displacement_mind.abs().mean().item():.1f}")
+
+        logger.info("Stage 2: Feature extraction...")
+        fixed_result  = get_features(config, fixed_img,  data["fixed_id"],  fuser, mask=fixed_mask)
+        moving_result = get_features(config, moving_img, data["moving_id"], fuser, mask=moving_mask)
+        fixed_feats, fixed_feat_shape, fixed_orig_shape = fixed_result
+        moving_feats, moving_feat_shape, moving_orig_shape = moving_result
+
+        logger.info(f"Feature Map stats [Fixed]:  min={fixed_feats.min():.3f}, max={fixed_feats.max():.3f}, mean={fixed_feats.mean():.3f}, std={fixed_feats.std():.3f}")
+        logger.info(f"Feature Map stats [Moving]: min={moving_feats.min():.3f}, max={moving_feats.max():.3f}, mean={moving_feats.mean():.3f}, std={moving_feats.std():.3f}")
+
+        viz.features(fixed_feats.transpose(1, 2, 3, 0),
+                     moving_feats.transpose(1, 2, 3, 0))
+
+        logger.info("Stage 3: PCA reduction + upsample...")
+        from sklearn.decomposition import PCA
+        import gc
+
+        n_pca = 16
+        C = fixed_feats.shape[0]
+        logger.info(f"  Feature channels: {C}, spatial: {fixed_feat_shape}")
+
+        flat_fix = fixed_feats.reshape(C, -1).T
+        flat_mov = moving_feats.reshape(C, -1).T
+
+        rng_pca = np.random.RandomState(42)
+        n_sub = min(50000, flat_fix.shape[0])
+        fit_data = np.vstack([
+            flat_fix[rng_pca.choice(len(flat_fix), n_sub, replace=False)],
+            flat_mov[rng_pca.choice(len(flat_mov), n_sub, replace=False)],
+        ])
+
+        pca = PCA(n_components=n_pca)
+        pca.fit(fit_data)
+        del fit_data
+        logger.info(f"  PCA: {C} -> {n_pca} channels, variance explained: "
+                    f"{pca.explained_variance_ratio_.sum():.3f}")
+
+        pca_fix = pca.transform(flat_fix).T.reshape(n_pca, *fixed_feat_shape)
+        del flat_fix
+        pca_mov = pca.transform(flat_mov).T.reshape(n_pca, *moving_feat_shape)
+        del flat_mov, fixed_feats, moving_feats, pca
+        gc.collect()
+
+        pca_fix_t = torch.from_numpy(pca_fix).unsqueeze(0).float()
+        del pca_fix
+        pca_mov_t = torch.from_numpy(pca_mov).unsqueeze(0).float()
+        del pca_mov
+        pca_fix_full = F.interpolate(pca_fix_t, size=(D, H, W), mode='trilinear', align_corners=False)
+        del pca_fix_t
+        pca_mov_full = F.interpolate(pca_mov_t, size=(D, H, W), mode='trilinear', align_corners=False)
+        del pca_mov_t
+        gc.collect()
+
+        pca_fix_full /= (pca_fix_full.norm(dim=1, keepdim=True) + 1e-6)
+        pca_mov_full /= (pca_mov_full.norm(dim=1, keepdim=True) + 1e-6)
+
+        logger.info(f"  Upsampled features: {pca_fix_full.shape}")
+
+        logger.info("Stage 4: Adam refinement with foundation features...")
+        displacement = convex_adam_on_features(
+            fixed_feats=pca_fix_full,
+            moving_feats=pca_mov_full,
+            volume_shape=(D, H, W),
+            grid_sp=4,
+            disp_hw=4,
+            lambda_weight=1.25,
+            n_iter_adam=300,
+            grid_sp_adam=2,
+            ic=False,
+            device=config.device,
+            initial_disp=displacement_mind,
+        )
+
+        del pca_fix_full, pca_mov_full, displacement_mind
+        total_matches = 0
+        match_result = None
 
     elif method == "sparse":
         # =============================================================
         # Foundation features (DINOv3/MATCHA) + sparse matching + SVF
         # =============================================================
-        assert fuser is not None, "Feature fuser required for sparse method"
+        assert fuser is not None, "Feature extractor required for sparse method"
         logger.info(f"\nMethod: {config.features.backend} + {config.matcher.method} + SVF")
 
         # Stage 1: Feature extraction
@@ -539,6 +808,9 @@ def run_pair(
 
         displacement = None
         match_result  = None
+        sparse_rejected = False
+
+        coord_downsample = 1 if config.features.backend == "mind" else downsample
 
         for outer_iter in range(n_outer):
             # Point-count schedule: coarse → medium → fine for NN.
@@ -561,7 +833,7 @@ def run_pair(
                 fixed_orig_shape, moving_orig_shape,
                 fixed_mask, moving_mask,
                 fixed_img, moving_img,
-                n_pts, downsample,
+                n_pts, coord_downsample,
                 viz=viz,
                 displacement=displacement,   # warp moving pts for iter ≥1
                 fixed_keypoints=data["fixed_keypoints"],
@@ -572,10 +844,21 @@ def run_pair(
             if match_result is None:
                 logger.warning(f"  Matching failed at outer iter {outer_iter + 1}")
                 if displacement is None:
-                    logger.error("  No displacement to fall back to — aborting")
-                    return {"pair_idx": pair_idx, "error": "matching_failed",
-                            "runtime_seconds": time.time() - t0}
+                    sparse_rejected = True
+                    break
                 logger.warning("  Keeping displacement from previous iteration")
+                break
+
+            if displacement is None and not _sparse_matches_are_trustworthy(match_result, n_pts):
+                logger.warning(
+                    "  Sparse matches rejected: n_matches=%d, coverage=%.3f, mean_dist=%.2f"
+                    % (
+                        match_result["n_matches"],
+                        match_result.get("match_coverage", 0.0),
+                        match_result.get("match_distance_mean", float("nan")),
+                    )
+                )
+                sparse_rejected = True
                 break
 
             # Fit SVF: field is fixed→moving.
@@ -591,6 +874,27 @@ def run_pair(
                         f"mean={displacement.abs().mean().item():.1f}")
 
         total_matches = match_result["n_matches"] if match_result else 0
+
+        if displacement is None or sparse_rejected:
+            logger.warning("Sparse stage deemed unreliable — falling back to MIND-SSC ConvexAdam")
+            from pipeline.transform.mind_convex_adam import mind_convex_adam
+
+            displacement = mind_convex_adam(
+                fixed_img=fixed_img,
+                moving_img=moving_img,
+                mind_r=1,
+                mind_d=2,
+                lambda_weight=1.25,
+                grid_sp=4,
+                disp_hw=4,
+                n_iter_adam=300,
+                grid_sp_adam=2,
+                ic=True,
+                device=config.device,
+                proximity_weight=0.25,
+            )
+            match_result = None
+            total_matches = 0
     else:
         raise ValueError(f"Unknown method: {method}")
 
@@ -680,6 +984,7 @@ def run_pair(
         "fixed_id": data["fixed_id"],
         "moving_id": data["moving_id"],
         "n_matches": total_matches,
+        "method_used": method if match_result is not None or method in ("mind", "feature_convex", "hybrid") else "mind",
         "runtime_seconds": time.time() - t0,
     }
 
@@ -725,13 +1030,15 @@ def run_pair(
 def main():
     parser = argparse.ArgumentParser(description="Run registration pipeline")
     parser.add_argument("--pair", type=int, default=None, help="Single pair index")
-    parser.add_argument("--split", type=str, default="val", choices=["train", "val"])
+    parser.add_argument("--split", type=str, default="train", choices=["train", "val"])
     parser.add_argument("--method", type=str, default="mind",
-                        choices=["mind", "sparse"],
+                        choices=["mind", "sparse", "feature_convex", "hybrid"],
                         help="'mind': MIND-SSC ConvexAdam baseline. "
-                             "'sparse': foundation features + matching + SVF fitting.")
-    parser.add_argument("--feature", type=str, default="dinov3", choices=["dinov3", "matcha"])
-    parser.add_argument("--matcher", type=str, default="gwot", choices=["nn", "ot", "gwot"])
+                             "'sparse': foundation features + sparse matching + SVF fitting. "
+                             "'feature_convex': foundation features + ConvexAdam. "
+                             "'hybrid': MIND convex init + foundation feature Adam refinement.")
+    parser.add_argument("--feature", type=str, default="matcha", choices=["dinov3", "matcha", "mind"])
+    parser.add_argument("--matcher", type=str, default="nn", choices=["nn", "ot", "gwot"])
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--n_points", type=int, default=None,
                         help="Override coarse n_points (default: use config)")
@@ -779,17 +1086,19 @@ def main():
     dataset = ThoraxCBCTDataset(config.paths.data_root, split=args.split)
     logger.info(f"Dataset: {dataset}")
 
-    # Feature extractor + fuser (only needed for sparse method)
     fuser = None
-    if args.method == "sparse":
+    if args.method in ("sparse", "feature_convex", "hybrid"):
         extractor = create_feature_extractor(config)
-        fuser = TriplanarFuser(
-            extractor,
-            batch_size=config.features.slice_batch_size,
-            fusion=config.features.fusion_method,
-            downsample=args.downsample,
-            device=config.device,
-        )
+        if config.features.backend == "mind":
+            fuser = extractor
+        else:
+            fuser = TriplanarFuser(
+                extractor,
+                batch_size=config.features.slice_batch_size,
+                fusion=config.features.fusion_method,
+                downsample=args.downsample,
+                device=config.device,
+            )
 
     # Run
     if args.pair is not None:

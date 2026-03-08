@@ -29,7 +29,7 @@ class PathConfig:
 @dataclass
 class FeatureConfig:
     """Feature extraction settings."""
-    backend: Literal["dinov3", "matcha"] = "dinov3"
+    backend: Literal["dinov3", "matcha", "mind"] = "matcha"
     dinov3_model: str = "vitb16"  # ViT-B/16
     patch_size: int = 16
     embed_dim: int = 768  # for ViT-B/16
@@ -40,7 +40,7 @@ class FeatureConfig:
     pca_dim: int = 256  # only used if fusion_method == "concat_pca"
 
     # Processing
-    slice_batch_size: int = 16  # num slices per forward pass
+    slice_batch_size: int = 4
     use_cache: bool = True
 
 
@@ -57,12 +57,13 @@ class SamplingConfig:
     # crash OT/GWOT and bias NN. Use n_keypoint_anchors to cap the injection.
     # At test time no keypoints will be available, so keep this disabled by default.
     n_keypoint_anchors: int = 0    # max keypoints to inject (0 = disabled)
+    max_displacement: Optional[float] = 25.0
 
 
 @dataclass
 class GWOTConfig:
     """GWOT matching settings."""
-    local_radius: float = 12.0  # mm, for spatial distance graphs
+    local_radius: float = 50.0  # mm, for spatial distance graphs (must be >> inter-point spacing)
     lambda_gw: float = 0.5  # spatial smoothness strength
     lambda_prior: float = 0.2  # anatomical plausibility prior
     epsilon: float = 0.05  # entropic regularization
@@ -85,8 +86,12 @@ class FittingConfig:
     lambda_jac: float = 0.1
 
     # Optimization
+    # NOTE: lr is scaled by grid_spacing in _fit_level → effective lr = lr * grid_spacing.
+    # lr=0.1 with grid_spacing=10 → effective lr=1.0, allowing velocities to grow
+    # ~1 voxel/iter on the control grid, which after S&S gives ~10+ voxel displacements.
+    # lr=0.001 was 100x too small (max disp ≈ 2 voxels even with GT correspondences).
     optimizer: Literal["lbfgs", "adam"] = "adam"
-    lr: float = 1e-3
+    lr: float = 0.1
     n_iters_per_level: int = 200
     n_squaring_steps: int = 7
 
@@ -104,7 +109,8 @@ class FittingConfig:
 @dataclass
 class MatcherConfig:
     """Matcher type for ablation."""
-    method: Literal["nn", "gwot", "ot"] = "gwot"
+    method: Literal["nn", "gwot", "ot"] = "nn"
+    nn_margin_threshold: float = 0.02
     # nn = nearest-neighbor matching
     # gwot = full Gromov-Wasserstein OT
     # ot = OT without GW term (ablation)

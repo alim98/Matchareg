@@ -1,0 +1,10 @@
+2026-03-07 23:32:53,847 INFO: Logging to /viper/u2/almik/feb25/pipeline/tests/results/test_13_sampling_recall_audit/logs/test_13_sampling_recall_audit_20260307_233253.log
+2026-03-07 23:34:28,502 INFO: real current fixed_mean=5.72 moving_mean=6.34 joint@8=72.8% joint@10=95.8% joint@12=99.1%
+2026-03-07 23:34:28,502 INFO: real legacy  fixed_mean=13.52 moving_mean=16.16 joint@8=2.9% joint@10=6.2% joint@12=10.5%
+2026-03-07 23:34:41,373 INFO: synthetic current fixed_mean=5.72 moving_mean=5.79 joint@8=81.3% joint@10=96.7% joint@12=99.4%
+2026-03-07 23:34:41,374 INFO: synthetic legacy  fixed_mean=13.52 moving_mean=13.63 joint@8=8.4% joint@10=15.2% joint@12=24.3%
+2026-03-07 23:34:41,926 INFO: ================================================================================
+2026-03-07 23:34:41,926 INFO: SUMMARY
+2026-03-07 23:34:41,926 INFO: ================================================================================
+2026-03-07 23:34:41,926 INFO: real: current joint@8=72.8% joint@10=95.8% joint@12=99.1% | legacy joint@8=2.9% joint@10=6.2% joint@12=10.5%
+2026-03-07 23:34:41,926 INFO: synthetic: current joint@8=81.3% joint@10=96.7% joint@12=99.4% | legacy joint@8=8.4% joint@10=15.2% joint@12=24.3%

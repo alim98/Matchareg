@@ -1,0 +1,12 @@
+2026-03-07 19:16:50,795 INFO: Logging to /viper/u2/almik/feb25/pipeline/tests/results/test_8_coordinate_sampling/logs/test_8_coordinate_sampling_20260307_191650.log
+2026-03-07 19:16:53,375 INFO: synthetic sampling: mean_abs_err=0.000000, max_abs_err=0.000001
+2026-03-07 19:18:12,751 INFO: dinov3: identity nn@1=100.0% same_mean=1.000 shifted_mean=0.990 mapping_max_err=0.000000
+2026-03-07 19:27:26,000 INFO: matcha: identity nn@1=100.0% same_mean=1.000 shifted_mean=0.976 mapping_max_err=0.000000
+2026-03-07 19:27:27,995 INFO: Loading cached features: /u/almik/feb25/pipeline/output/feature_cache/ThoraxCBCT_0000_0001_mind_coord_identity_ds2.npz
+2026-03-07 19:27:31,496 INFO: mind: identity nn@1=91.7% same_mean=1.000 shifted_mean=0.860 mapping_max_err=0.000000
+2026-03-07 19:27:32,600 INFO: ================================================================================
+2026-03-07 19:27:32,600 INFO: SUMMARY
+2026-03-07 19:27:32,600 INFO: ================================================================================
+2026-03-07 19:27:32,600 INFO: dinov3: nn@1=100.0% same=1.000 shifted=0.990 mapping_err=0.000000
+2026-03-07 19:27:32,600 INFO: matcha: nn@1=100.0% same=1.000 shifted=0.976 mapping_err=0.000000
+2026-03-07 19:27:32,600 INFO: mind: nn@1=91.7% same=1.000 shifted=0.860 mapping_err=0.000000
